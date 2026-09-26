@@ -68,3 +68,22 @@ def me(user):
         "email": user.email,
         "privilege": user.privilege
     }
+
+
+@users.route("/users/delete/<int:user_id>", methods=["DELETE"])
+@admin_required
+def delete_user(user_id):
+
+    user = User.query.get(user_id)
+
+    if user is None:
+        return {
+            "message": "User not found"
+        }, 404
+
+    db.session.delete(user)
+    db.session.commit()
+
+    return {
+        "message": "User deleted successfully"
+    }, 200
