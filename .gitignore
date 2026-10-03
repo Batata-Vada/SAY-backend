@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Virtual environment
+.venv/
+venv/
+
+# Flask / SQLite runtime data
+instance/
+*.db
+
+# Environment variables
+.env
