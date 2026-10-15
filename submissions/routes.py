@@ -138,3 +138,86 @@ def submit(user):
         return jsonify({
             "message": "Failed to save submission"
         }), 500
+
+
+@submissions.route("/submissions", methods=["GET"])
+@login_required
+def get_submissions(user):
+    # The authenticated user comes from the token middleware.
+    query = Submission.query.filter_by(uid=user.uid)
+
+    # Optional language filter: cpp or python
+    language = request.args.get("language", "").strip().lower()
+
+    if language:
+        if language not in ("cpp", "python"):
+            return {
+                "message": "Invalid language. Use 'cpp' or 'python'."
+            }, 400
+
+        query = query.filter_by(language=language)
+
+    # Optional question filter
+    question_id = request.args.get("question_id")
+
+    if question_id is not None:
+        try:
+            question_id = int(question_id)
+        except (TypeError, ValueError):
+            return {"message": "question_id must be an integer."}, 400
+
+        if question_id <= 0:
+            return {"message": "question_id must be positive."}, 400
+
+        query = query.filter_by(question_id=question_id)
+
+    # Pagination
+    try:
+        limit = int(request.args.get("limit", 20))
+        offset = int(request.args.get("offset", 0))
+    except (TypeError, ValueError):
+        return {"message": "limit and offset must be integers."}, 400
+
+    if not 1 <= limit <= 100:
+        return {"message": "limit must be between 1 and 100."}, 400
+
+    if offset < 0:
+        return {"message": "offset cannot be negative."}, 400
+
+    # Count after applying filters, but before pagination
+    total = query.count()
+
+    # Most recent submissions first
+    submissions_list = (
+        query
+        .order_by(Submission.created_at.desc(), Submission.id.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+    return {
+        "submissions": [
+            {
+                "id": submission.id,
+                "question_id": submission.question_id,
+                "language": submission.language,
+                "filename": submission.filename,
+                "created_at": (
+                    submission.created_at.isoformat()
+                    if submission.created_at else None
+                ),
+            }
+            for submission in submissions_list
+        ],
+        "pagination": {
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "returned": len(submissions_list),
+        },
+        "filters": {
+            "language": language or None,
+            "question_id": question_id,
+        },
+    }, 200
