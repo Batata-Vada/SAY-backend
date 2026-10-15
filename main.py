@@ -5,11 +5,13 @@ from database.db import db
 
 from auth.routes import auth
 from users.routes import users
+from submissions.routes import submissions
 
 # Import models before db.create_all()
 from models.users import User
 from models.session import Session
 from models.problem import Problem
+from models.submission import Submission
 
 from problem_stats.sync import sync_all
 
@@ -31,6 +33,7 @@ with app.app_context():
 # Register blueprints
 app.register_blueprint(auth)
 app.register_blueprint(users)
+app.register_blueprint(submissions)
 
 
 @app.route("/")
