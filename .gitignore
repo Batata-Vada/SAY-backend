@@ -5,6 +5,7 @@ __pycache__/
 # Virtual environment
 .venv/
 venv/
+.vscode/
 
 # Flask / SQLite runtime data
 instance/
@@ -12,3 +13,6 @@ instance/
 
 # Environment variables
 .env
+
+# Local testing files
+/register_test.py

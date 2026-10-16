@@ -10,8 +10,8 @@ users = Blueprint("users", __name__)
 
 
 @users.route("/users", methods=["GET"])
-def get_users():
-
+@admin_required
+def get_users(admin):
     users_list = User.query.all()
 
     return {
@@ -24,7 +24,7 @@ def get_users():
             }
             for user in users_list
         ]
-    }
+    }, 200
 
 
 @users.route("/users/<int:user_id>", methods=["GET"])

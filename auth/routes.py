@@ -1,105 +1,204 @@
+"""SAY registration, login, and logout."""
+
+import re
 import bcrypt
-import secrets
 
 from flask import Blueprint, request
+from sqlalchemy import or_
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from database.db import db
-
-from models.users import User
+from middleware.auth import (
+    bearer_token,
+    issue_session_token,
+    login_required,
+    token_digest,
+)
 from models.session import Session
-
-from middleware.auth import login_required
+from models.users import User
 
 
 auth = Blueprint("auth", __name__)
 
+_EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+
+
+def _json_object():
+    data = request.get_json(silent=True)
+
+    return data if isinstance(data, dict) else None
+
 
 @auth.route("/register", methods=["POST"])
 def register():
+    data = _json_object()
 
-    data = request.json
+    if data is None:
+        return {"message": "A JSON object is required"}, 400
 
-    name = data["name"]
-    email = data["email"]
-    password = data["password"]
+    name = data.get("name")
+    email = data.get("email")
+    password = data.get("password")
 
-    password_hash = bcrypt.hashpw(
-        password.encode("utf-8"),
-        bcrypt.gensalt()
-    )
+    if (
+        not isinstance(name, str)
+        or not 3 <= len(name.strip()) <= 100
+    ):
+        return {
+            "message": "Name must be 3–100 characters"
+        }, 400
 
-    if name == "master":
-        privilege = "admin"
-    else:
-        privilege = "user"
+    name = name.strip()
+
+    if (
+        not isinstance(email, str)
+        or len(email.strip()) > 120
+    ):
+        return {"message": "Invalid email"}, 400
+
+    email = email.strip().lower()
+
+    if not _EMAIL_RE.fullmatch(email):
+        return {"message": "Invalid email"}, 400
+
+    if not isinstance(password, str):
+        return {
+            "message": "Password must be a string"
+        }, 400
+
+    password_bytes = password.encode("utf-8")
+
+    if (
+        len(password_bytes) < 8
+        or len(password_bytes) > 72
+    ):
+        return {
+            "message": "Password must be 8–72 UTF-8 bytes"
+        }, 400
+
+    existing = User.query.filter(
+        or_(
+            User.name == name,
+            User.email == email
+        )
+    ).first()
+
+    if existing is not None:
+        return {
+            "message": "Name or email is already registered"
+        }, 409
 
     user = User(
         name=name,
         email=email,
-        password=password_hash.decode("utf-8"),
-        privilege=privilege
+        password=bcrypt.hashpw(
+            password_bytes,
+            bcrypt.gensalt()
+        ).decode("utf-8"),
+        privilege="user"
     )
 
-    db.session.add(user)
-    db.session.commit()
+    try:
+        db.session.add(user)
+        db.session.commit()
+
+    except IntegrityError:
+        db.session.rollback()
+        return {
+            "message": "Name or email is already registered"
+        }, 409
+
+    except SQLAlchemyError:
+        db.session.rollback()
+        return {
+            "message": "Registration failed"
+        }, 500
 
     return {
-        "message": "User registered successfully"
+        "message": "User registered successfully",
+        "uid": user.uid
     }, 201
 
 
 @auth.route("/login", methods=["POST"])
 def login():
+    data = _json_object()
 
-    data = request.json
+    if data is None:
+        return {"message": "A JSON object is required"}, 400
 
-    name = data["name"]
-    password = data["password"]
+    name = data.get("name")
+    password = data.get("password")
+
+    if (
+        not isinstance(name, str)
+        or not isinstance(password, str)
+    ):
+        return {
+            "message": "Name and password are required"
+        }, 400
+
+    name = name.strip()
+    password_bytes = password.encode("utf-8")
+
+    if (
+        not name
+        or not password_bytes
+        or len(password_bytes) > 72
+    ):
+        return {"message": "Invalid credentials"}, 401
 
     user = User.query.filter_by(name=name).first()
 
     if user is None:
-        return {
-            "message": "Invalid credentials"
-        }, 401
+        return {"message": "Invalid credentials"}, 401
 
-    password_correct = bcrypt.checkpw(
-        password.encode("utf-8"),
-        user.password.encode("utf-8")
-    )
+    try:
+        valid = bcrypt.checkpw(
+            password_bytes,
+            user.password.encode("utf-8")
+        )
+    except (ValueError, TypeError):
+        valid = False
 
-    if not password_correct:
-        return {
-            "message": "Invalid credentials"
-        }, 401
+    if not valid:
+        return {"message": "Invalid credentials"}, 401
 
-    token = secrets.token_urlsafe(32)
+    token = issue_session_token(user.uid)
 
-    session = Session(
-        uid=user.uid,
-        token=token
-    )
+    try:
+        db.session.add(
+            Session(
+                uid=user.uid,
+                token=token_digest(token)
+            )
+        )
+        db.session.commit()
 
-    db.session.add(session)
-    db.session.commit()
+    except SQLAlchemyError:
+        db.session.rollback()
+        return {"message": "Login failed"}, 500
 
     return {
         "message": "Login successful",
-        "token": token
+        "token": token,
+        "token_type": "Bearer"
     }, 200
+
 
 @auth.route("/logout", methods=["POST"])
 @login_required
 def logout(user):
+    token = bearer_token()
 
-    token = request.headers.get("Authorization")
-
-    session = Session.query.filter_by(
-        token=token
+    active_session = Session.query.filter_by(
+        uid=user.uid,
+        token=token_digest(token)
     ).first()
 
-    db.session.delete(session)
-    db.session.commit()
+    if active_session is not None:
+        db.session.delete(active_session)
+        db.session.commit()
 
     return {
         "message": "Logged out successfully"

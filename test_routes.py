@@ -1,64 +1,107 @@
+"""Smoke tests against a running SAY backend."""
+
+import os
 import requests
 
-BASE_URL = "http://127.0.0.1:5000"
+
+BASE_URL = os.getenv(
+    "SAY_BASE_URL",
+    "http://127.0.0.1:5001"
+).rstrip("/")
 
 
-def print_response(response):
+def main():
+    username = os.getenv("SAY_TEST_USERNAME")
+    password = os.getenv("SAY_TEST_PASSWORD")
 
-    print("Status:", response.status_code)
-
-    try:
-        print("Response:", response.json())
-    except ValueError:
-        print("Response:", response.text)
-
-    print("-" * 50)
-
-
-def login(name, password):
-
-    print(f"LOGIN: {name}")
+    if not username or not password:
+        raise SystemExit(
+            "Set SAY_TEST_USERNAME and SAY_TEST_PASSWORD"
+        )
 
     response = requests.post(
         f"{BASE_URL}/login",
         json={
-            "name": name,
+            "name": username,
             "password": password
-        }
+        },
+        timeout=15
     )
 
-    print_response(response)
+    response.raise_for_status()
 
-    return response
+    token = response.json()["token"]
 
-
-# LOGIN
-login_response = login(
-    "master",
-    "master123"
-)
-
-if login_response.status_code != 200:
-    print("Login failed. Stopping.")
-    exit()
-
-
-# GET TOKEN
-token = login_response.json()["token"]
-
-print("SESSION TOKEN:")
-print(token)
-print()
-
-
-# TEST /me
-print("GETTING CURRENT USER")
-
-response = requests.get(
-    f"{BASE_URL}/me",
-    headers={
-        "Authorization": token
+    headers = {
+        "Authorization": f"Bearer {token}"
     }
-)
 
-print_response(response)
+    print("PASS: login")
+
+    response = requests.get(
+        f"{BASE_URL}/me",
+        headers=headers,
+        timeout=15
+    )
+
+    response.raise_for_status()
+
+    profile = response.json()
+
+    assert profile["name"] == username
+    assert "password" not in profile
+
+    print("PASS: authenticated /me")
+
+    response = requests.get(
+        f"{BASE_URL}/users",
+        timeout=15
+    )
+
+    assert response.status_code == 401
+
+    print("PASS: unauthenticated user listing blocked")
+
+    response = requests.get(
+        f"{BASE_URL}/users/{profile['uid']}",
+        headers=headers,
+        timeout=15
+    )
+
+    assert response.status_code == 200
+
+    print("PASS: own profile accessible")
+
+    if profile["privilege"] != "admin":
+        response = requests.get(
+            f"{BASE_URL}/users",
+            headers=headers,
+            timeout=15
+        )
+
+        assert response.status_code == 403
+
+        print("PASS: non-admin user listing blocked")
+
+    response = requests.post(
+        f"{BASE_URL}/logout",
+        headers=headers,
+        timeout=15
+    )
+
+    response.raise_for_status()
+
+    response = requests.get(
+        f"{BASE_URL}/me",
+        headers=headers,
+        timeout=15
+    )
+
+    assert response.status_code == 401
+
+    print("PASS: logout revoked session")
+    print("All smoke tests passed")
+
+
+if __name__ == "__main__":
+    main()
