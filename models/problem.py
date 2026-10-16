@@ -1,3 +1,6 @@
+"""Canonical catalog entries for programming problems.
+"""
+
 from datetime import datetime, timezone
 
 from database.db import db
@@ -49,9 +52,6 @@ class Problem(db.Model):
         nullable=True,
     )
 
-    #
-    # Keep platform-specific data raw for now.
-    #
     difficulty_raw = db.Column(
         db.JSON,
         nullable=True,
@@ -101,9 +101,14 @@ class Problem(db.Model):
         ),
     )
 
+    @property
+    def codeforces_rating(self):
+        """Convenience property; None when no Codeforces rating exists."""
+        if self.platform != "CODEFORCES":
+            return None
+        return (self.difficulty_raw or {}).get("rating")
+
     def __repr__(self):
         return (
-            f"<Problem "
-            f"{self.platform}:{self.external_id} "
-            f"{self.title}>"
+            f"<Problem {self.platform}:{self.external_id} {self.title}>"
         )

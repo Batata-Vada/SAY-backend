@@ -1,5 +1,6 @@
 """SAY Flask application and database-management commands."""
 
+import json
 import os
 
 import click
@@ -22,7 +23,7 @@ from models.session import Session
 from models.problem import Problem
 from models.submission import Submission
 
-from problem_stats.sync import sync_all
+from problem_stats.sync import sync_codeforces_problems
 
 
 def create_app(test_config=None):
@@ -66,126 +67,91 @@ def create_app(test_config=None):
         ],
     )
 
-    # Initialize database and migration extensions.
     db.init_app(app)
     migrate.init_app(app, db)
 
-    # Do not call db.create_all() here.
-    # All database schema changes are managed through migrations.
-
+    # IMPORTANT: No db.create_all(); Step 2 migrations own the schema.
     app.register_blueprint(auth)
     app.register_blueprint(users)
     app.register_blueprint(submissions)
 
     @app.get("/")
     def health():
-        return {
-            "message": "SAY backend is running"
-        }, 200
+        return {"message": "SAY backend is running"}, 200
 
-    @app.cli.command("sync-problems")
-    def sync_problems_command():
-        """Run existing problem collectors."""
-        click.echo(sync_all())
+    @app.cli.command("sync-cf-problems")
+    def sync_cf_problems_command():
+        """Atomically download/update Codeforces problem metadata."""
+        try:
+            summary = sync_codeforces_problems()
+        except Exception as exc:
+            app.logger.exception("Codeforces problem sync failed")
+            raise click.ClickException(
+                f"Codeforces sync failed: {exc}"
+            ) from exc
+        click.echo(json.dumps(summary, indent=2))
 
     @app.cli.command("grant-admin")
     @click.argument("username")
     def grant_admin(username):
         """Grant admin privilege through the server CLI."""
-
-        user = User.query.filter_by(
-            name=username
-        ).first()
-
+        user = User.query.filter_by(name=username).first()
         if user is None:
             raise click.ClickException("User not found")
-
         user.privilege = "admin"
         db.session.commit()
-
-        click.echo(
-            f"Admin privilege granted to {username}"
-        )
+        click.echo(f"Admin privilege granted to {username}")
 
     @app.cli.command("db-info")
     def db_info():
         """Display database information without credentials."""
-
         with db.engine.connect() as connection:
             table_names = inspect(connection).get_table_names()
 
-        click.echo(
-            f"Dialect: {db.engine.dialect.name}"
-        )
-
+        click.echo(f"Dialect: {db.engine.dialect.name}")
         if db.engine.dialect.name == "sqlite":
-            click.echo(
-                f"SQLite file: {db.engine.url.database}"
-            )
-
+            click.echo(f"SQLite file: {db.engine.url.database}")
         click.echo(
-            "Tables: " +
-            (", ".join(sorted(table_names)) or "(none)")
+            "Tables: " + (", ".join(sorted(table_names)) or "(none)")
         )
 
     @app.cli.command("verify-db-schema")
     def verify_db_schema():
         """Compare the existing DB with imported ORM models."""
-
         expected_tables = set(db.metadata.tables.keys())
-
         if not expected_tables:
             raise click.ClickException(
-                "No model tables registered; "
-                "check model imports in main.py"
+                "No model tables registered; check model imports in main.py"
             )
 
         with db.engine.connect() as connection:
-            actual_tables = set(
-                inspect(connection).get_table_names()
-            )
-
+            actual_tables = set(inspect(connection).get_table_names())
             actual_tables.discard("alembic_version")
-
-            missing = sorted(
-                expected_tables - actual_tables
-            )
-
-            extra = sorted(
-                actual_tables - expected_tables
-            )
-
+            missing = sorted(expected_tables - actual_tables)
+            extra = sorted(actual_tables - expected_tables)
             if missing or extra:
                 raise click.ClickException(
                     f"Schema mismatch. Missing tables: {missing}; "
-                    f"unexpected tables: {extra}. "
-                    "Do not stamp this database."
+                    f"unexpected tables: {extra}. Do not stamp this database."
                 )
 
             context = MigrationContext.configure(
                 connection,
                 opts={"compare_type": True},
             )
-
-            differences = compare_metadata(
-                context,
-                db.metadata
-            )
+            differences = compare_metadata(context, db.metadata)
 
         if differences:
             for change in differences:
                 click.echo(repr(change), err=True)
-
             raise click.ClickException(
-                "Schema differs from models. "
-                "Do not stamp this database. "
+                "Schema differs from models. Do not stamp this database. "
                 "Inspect these differences first."
             )
 
         click.echo(
-            "Schema matches imported SQLAlchemy models "
-            "according to Alembic autogenerate. "
-            "Review important constraints before stamping."
+            "Schema matches imported SQLAlchemy models according to "
+            "Alembic autogenerate. Review important constraints before stamping."
         )
 
     return app
