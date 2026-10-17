@@ -11,23 +11,25 @@ from sqlalchemy import inspect
 
 from config import Config
 from database.db import db, migrate
-
 from auth.routes import auth
 from users.routes import users
 from submissions.routes import submissions
 from codeforces.routes import codeforces
+from analytics.routes import analytics
 
-# Alembic must see every table before generating migrations.
+# Alembic must see *all* tables before generating migrations.
 from models.users import User
 from models.session import Session
 from models.problem import Problem
-from models.submission import Submission   # Local saved code files (unchanged).
+from models.submission import Submission  # Saved source files; unchanged.
 from models.codeforces_account import CodeforcesAccount
 from models.codeforces_submission import CodeforcesSubmission
+from models.user_problem_progress import UserProblemProgress
 
 from problem_stats.sync import sync_codeforces_problems
 from codeforces.submission_sync import sync_codeforces_submissions
 from codeforces.reconciliation import reconcile_unresolved_submissions
+from analytics.progress import rebuild_user_progress, ProgressBuildError
 
 
 def create_app(test_config=None):
@@ -61,6 +63,7 @@ def create_app(test_config=None):
     app.register_blueprint(users)
     app.register_blueprint(submissions)
     app.register_blueprint(codeforces)
+    app.register_blueprint(analytics)
 
     @app.get("/")
     def health():
@@ -80,8 +83,7 @@ def create_app(test_config=None):
     @click.option("--account-id", required=True, type=click.IntRange(min=1),
                   help="CodeforcesAccount.id, NOT the SAY user uid.")
     @click.option("--full", is_flag=True, help="Rescan all available submission history.")
-    @click.option("--page-size", type=click.IntRange(1, 1000), default=500,
-                  show_default=True)
+    @click.option("--page-size", type=click.IntRange(1, 1000), default=500, show_default=True)
     @click.option("--overlap", type=click.IntRange(min=0), default=100,
                   show_default=True, help="Minimum known submissions before stopping incrementally.")
     @click.option("--lookback-days", type=click.IntRange(min=0), default=14,
@@ -113,6 +115,20 @@ def create_app(test_config=None):
             db.session.rollback()
             raise click.ClickException("Reconciliation failed") from exc
         click.echo(f"Reconciled {count} problem references")
+
+    @app.cli.command("rebuild-cf-progress")
+    @click.option("--uid", required=True, type=click.IntRange(min=1),
+                  help="SAY User.uid, NOT CodeforcesAccount.id.")
+    def rebuild_cf_progress_command(uid):
+        """Rebuild personal progress only from the active account's official evidence."""
+        try:
+            summary = rebuild_user_progress(uid)
+        except (ProgressBuildError, ValueError) as exc:
+            raise click.ClickException(str(exc)) from exc
+        except Exception as exc:
+            app.logger.exception("User progress rebuild failed for uid=%s", uid)
+            raise click.ClickException("Progress rebuild failed; check server logs") from exc
+        click.echo(json.dumps(summary, indent=2))
 
     @app.cli.command("grant-admin")
     @click.argument("username")
