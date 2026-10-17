@@ -17,3 +17,4 @@ instance/
 # Local testing files
 /register_test.py
 /test_codeforces_sync.py
+/test_routes.py
