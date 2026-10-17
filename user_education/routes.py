@@ -119,3 +119,41 @@ def delete_education(user, education_id):
         db.session.rollback()
         return {"message": "Could not delete education record"}, 500
     return {"message": "Education deleted successfully"}, 200
+
+
+@user_education.route("/education/me", methods=["PUT"])
+@login_required
+def replace_my_education(user):
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or not isinstance(data.get("education"), list):
+        return {"message": "education must be a JSON array"}, 400
+    visible = data.get("is_visible", True)
+    if not isinstance(visible, bool):
+        return {"message": "is_visible must be a boolean"}, 400
+
+    validated = []
+    for item in data["education"]:
+        error = validate_payload(item)
+        if error:
+            return {"message": error}, 400
+        validated.append(item)
+
+    try:
+        UserEducation.query.filter_by(uid=user.uid).delete(synchronize_session=False)
+        for item in validated:
+            db.session.add(UserEducation(
+                uid=user.uid,
+                institution=item["institution"].strip(),
+                degree=item["degree"].strip(),
+                field_of_study=item.get("field_of_study") or None,
+                start_year=item.get("start_year") or None,
+                end_year=item.get("end_year") or None,
+                is_visible=visible,
+            ))
+        db.session.commit()
+    except SQLAlchemyError:
+        db.session.rollback()
+        return {"message": "Could not save education records"}, 500
+
+    entries = UserEducation.query.filter_by(uid=user.uid).order_by(UserEducation.id.asc()).all()
+    return {"message": "Education saved successfully", "education": [serialize_education(e) for e in entries]}, 200
