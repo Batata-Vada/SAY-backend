@@ -203,3 +203,42 @@ def logout(user):
     return {
         "message": "Logged out successfully"
     }, 200
+
+@auth.route("/change-password", methods=["PUT"])
+@login_required
+def change_password(user):
+    data = request.get_json()
+
+    if not data:
+        return {"message": "Request body is required"}, 400
+
+    current_password = data.get("current_password")
+    new_password = data.get("new_password")
+
+    if not current_password or not new_password:
+        return {
+            "message": "Current password and new password are required"
+        }, 400
+
+    if len(new_password) < 8:
+        return {
+            "message": "New password must be at least 8 characters long"
+        }, 400
+
+    
+    if not bcrypt.checkpw(
+        current_password.encode("utf-8"),
+        user.password.encode("utf-8")
+    ):
+        return {"message": "Current password is incorrect"}, 400
+
+    
+    new_password_hash = bcrypt.hashpw(
+        new_password.encode("utf-8"),
+        bcrypt.gensalt()
+    )
+
+    user.password = new_password_hash.decode("utf-8")
+    db.session.commit()
+
+    return {"message": "Password updated successfully"}, 200
