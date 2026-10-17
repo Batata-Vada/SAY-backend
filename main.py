@@ -16,6 +16,8 @@ from users.routes import users
 from submissions.routes import submissions
 from codeforces.routes import codeforces
 from analytics.routes import analytics
+from recommendations.routes import recommendations
+from models.recommendation_log import RecommendationLog
 from user_profile.routes import profile
 from user_education.routes import education
 
@@ -28,6 +30,7 @@ from models.codeforces_account import CodeforcesAccount
 from models.codeforces_submission import CodeforcesSubmission
 from models.user_problem_progress import UserProblemProgress
 from models.user_topic_mastery import UserTopicMastery, UserDifficultyReadiness
+from models.recommendation_log import RecommendationLog
 from models.user_profile import UserProfile
 from models.user_education import UserEducation
 
@@ -70,6 +73,7 @@ def create_app(test_config=None):
     app.register_blueprint(submissions)
     app.register_blueprint(codeforces)
     app.register_blueprint(analytics)
+    app.register_blueprint(recommendations)
     app.register_blueprint(profile, url_prefix="/profile")
     app.register_blueprint(education, url_prefix="/education")
     
