@@ -17,6 +17,9 @@ from auth.routes import auth
 from users.routes import users
 from submissions.routes import submissions
 
+from codeforces.routes import codeforces
+from models.codeforces_account import CodeforcesAccount
+
 # All models must be imported for Alembic to detect their tables.
 from models.users import User
 from models.session import Session
@@ -70,10 +73,12 @@ def create_app(test_config=None):
     db.init_app(app)
     migrate.init_app(app, db)
 
-    # IMPORTANT: No db.create_all(); Step 2 migrations own the schema.
+    # IMPORTANT: No db.create_all();
     app.register_blueprint(auth)
     app.register_blueprint(users)
     app.register_blueprint(submissions)
+    app.register_blueprint(codeforces)
+
 
     @app.get("/")
     def health():
