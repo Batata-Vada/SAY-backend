@@ -87,3 +87,28 @@ def delete_user(user_id):
     return {
         "message": "User deleted successfully"
     }, 200
+
+@users.route("/me", methods=["PUT"])
+@login_required
+def update_my_username(user):
+    from flask import request
+    from sqlalchemy.exc import IntegrityError
+
+    data = request.get_json(silent=True)
+    name = data.get("name") if isinstance(data, dict) else None
+    if not isinstance(name, str) or not 3 <= len(name.strip()) <= 100:
+        return {"message": "Username must be 3–100 characters"}, 400
+
+    name = name.strip()
+    existing = User.query.filter(User.name == name, User.uid != user.uid).first()
+    if existing:
+        return {"message": "That username is already taken"}, 409
+
+    user.name = name
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return {"message": "That username is already taken"}, 409
+
+    return {"message": "Username updated successfully", "name": user.name}, 200
