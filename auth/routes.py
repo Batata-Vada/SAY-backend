@@ -203,3 +203,36 @@ def logout(user):
     return {
         "message": "Logged out successfully"
     }, 200
+
+@auth.route("/change-password", methods=["PUT"])
+@login_required
+def change_password(user):
+    data = _json_object()
+    if data is None:
+        return {"message": "A JSON object is required"}, 400
+
+    current_password = data.get("current_password")
+    new_password = data.get("new_password")
+    if not isinstance(current_password, str) or not isinstance(new_password, str):
+        return {"message": "Current and new passwords are required"}, 400
+
+    current_bytes = current_password.encode("utf-8")
+    new_bytes = new_password.encode("utf-8")
+    if len(current_bytes) > 72 or not 8 <= len(new_bytes) <= 72:
+        return {"message": "New password must be 8–72 UTF-8 bytes"}, 400
+
+    try:
+        valid = bcrypt.checkpw(current_bytes, user.password.encode("utf-8"))
+    except (ValueError, TypeError):
+        valid = False
+    if not valid:
+        return {"message": "Current password is incorrect"}, 401
+
+    user.password = bcrypt.hashpw(new_bytes, bcrypt.gensalt()).decode("utf-8")
+    try:
+        db.session.commit()
+    except SQLAlchemyError:
+        db.session.rollback()
+        return {"message": "Could not update password"}, 500
+
+    return {"message": "Password updated successfully"}, 200
