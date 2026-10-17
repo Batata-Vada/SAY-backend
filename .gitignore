@@ -15,9 +15,4 @@ instance/
 .env
 
 # Local testing files
-/register_test.py
-/test_codeforces_sync.py
-/test_routes.py
-/test_codeforces_linking.py
-/test_codeforces_account.py
-/test_codeforces_client.py
+/tests
