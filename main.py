@@ -17,19 +17,21 @@ from submissions.routes import submissions
 from codeforces.routes import codeforces
 from analytics.routes import analytics
 
-# Alembic must see *all* tables before generating migrations.
+# Alembic must see all ORM tables before migration autogeneration.
 from models.users import User
 from models.session import Session
 from models.problem import Problem
-from models.submission import Submission  # Saved source files; unchanged.
+from models.submission import Submission  # Local code files: unchanged.
 from models.codeforces_account import CodeforcesAccount
 from models.codeforces_submission import CodeforcesSubmission
 from models.user_problem_progress import UserProblemProgress
+from models.user_topic_mastery import UserTopicMastery, UserDifficultyReadiness
 
 from problem_stats.sync import sync_codeforces_problems
 from codeforces.submission_sync import sync_codeforces_submissions
 from codeforces.reconciliation import reconcile_unresolved_submissions
 from analytics.progress import rebuild_user_progress, ProgressBuildError
+from analytics.mastery import rebuild_user_skills, SkillEstimateError
 
 
 def create_app(test_config=None):
@@ -58,7 +60,7 @@ def create_app(test_config=None):
     )
     db.init_app(app)
     migrate.init_app(app, db)
-    # Do NOT use db.create_all(); migrations own schema creation.
+    # Never call db.create_all() at application startup: Alembic owns the schema.
     app.register_blueprint(auth)
     app.register_blueprint(users)
     app.register_blueprint(submissions)
@@ -107,7 +109,7 @@ def create_app(test_config=None):
     @app.cli.command("reconcile-cf-submissions")
     @click.option("--account-id", required=True, type=click.IntRange(min=1))
     def reconcile_cf_submissions_command(account_id):
-        """Match previously unresolved submissions to newly imported problems."""
+        """Match unresolved submissions to newly imported Codeforces problems."""
         try:
             count = reconcile_unresolved_submissions(account_id)
             db.session.commit()
@@ -120,7 +122,7 @@ def create_app(test_config=None):
     @click.option("--uid", required=True, type=click.IntRange(min=1),
                   help="SAY User.uid, NOT CodeforcesAccount.id.")
     def rebuild_cf_progress_command(uid):
-        """Rebuild personal progress only from the active account's official evidence."""
+        """Rebuild personal progress from active account official submissions."""
         try:
             summary = rebuild_user_progress(uid)
         except (ProgressBuildError, ValueError) as exc:
@@ -128,6 +130,20 @@ def create_app(test_config=None):
         except Exception as exc:
             app.logger.exception("User progress rebuild failed for uid=%s", uid)
             raise click.ClickException("Progress rebuild failed; check server logs") from exc
+        click.echo(json.dumps(summary, indent=2))
+
+    @app.cli.command("rebuild-cf-skills")
+    @click.option("--uid", required=True, type=click.IntRange(min=1),
+                  help="SAY User.uid, NOT CodeforcesAccount.id.")
+    def rebuild_cf_skills_command(uid):
+        """Recompute per-tag mastery and rating-band readiness from progress."""
+        try:
+            summary = rebuild_user_skills(uid)
+        except (SkillEstimateError, ValueError) as exc:
+            raise click.ClickException(str(exc)) from exc
+        except Exception as exc:
+            app.logger.exception("Skill rebuild failed for uid=%s", uid)
+            raise click.ClickException("Skill rebuild failed; check server logs") from exc
         click.echo(json.dumps(summary, indent=2))
 
     @app.cli.command("grant-admin")
