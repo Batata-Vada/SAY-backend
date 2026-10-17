@@ -16,8 +16,6 @@ from users.routes import users
 from submissions.routes import submissions
 from codeforces.routes import codeforces
 from analytics.routes import analytics
-from user_profile.routes import user_profile
-from user_education.routes import user_education
 
 # Alembic must see all ORM tables before migration autogeneration.
 from models.users import User
@@ -28,8 +26,6 @@ from models.codeforces_account import CodeforcesAccount
 from models.codeforces_submission import CodeforcesSubmission
 from models.user_problem_progress import UserProblemProgress
 from models.user_topic_mastery import UserTopicMastery, UserDifficultyReadiness
-from models.user_profile import UserProfile
-from models.user_education import UserEducation
 
 from problem_stats.sync import sync_codeforces_problems
 from codeforces.submission_sync import sync_codeforces_submissions
@@ -70,8 +66,6 @@ def create_app(test_config=None):
     app.register_blueprint(submissions)
     app.register_blueprint(codeforces)
     app.register_blueprint(analytics)
-    app.register_blueprint(user_profile)
-    app.register_blueprint(user_education)
 
     @app.get("/")
     def health():
