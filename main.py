@@ -15,7 +15,10 @@ from auth.routes import auth
 from users.routes import users
 from submissions.routes import submissions
 from codeforces.routes import codeforces
+from codeforces.api_extra import codeforces_api
+from recommendations.api_alias import recommendation_api
 from analytics.routes import analytics
+from recommendations.routes import recommendations
 from user_profile.routes import profile
 from user_education.routes import education
 
@@ -27,11 +30,14 @@ from models.submission import Submission  # Local code files: unchanged.
 from models.codeforces_account import CodeforcesAccount
 from models.codeforces_submission import CodeforcesSubmission
 from models.user_problem_progress import UserProblemProgress
+from models.codeforces_sync_request import CodeforcesSyncRequest
 from models.user_topic_mastery import UserTopicMastery, UserDifficultyReadiness
+from models.recommendation_log import RecommendationLog
 from models.user_profile import UserProfile
 from models.user_education import UserEducation
 
 from problem_stats.sync import sync_codeforces_problems
+from codeforces.sync_queue import process_one_sync_request
 from codeforces.submission_sync import sync_codeforces_submissions
 from codeforces.reconciliation import reconcile_unresolved_submissions
 from analytics.progress import rebuild_user_progress, ProgressBuildError
@@ -69,7 +75,10 @@ def create_app(test_config=None):
     app.register_blueprint(users)
     app.register_blueprint(submissions)
     app.register_blueprint(codeforces)
+    app.register_blueprint(codeforces_api)
+    app.register_blueprint(recommendation_api)
     app.register_blueprint(analytics)
+    app.register_blueprint(recommendations)
     app.register_blueprint(profile, url_prefix="/profile")
     app.register_blueprint(education, url_prefix="/education")
     
@@ -153,6 +162,18 @@ def create_app(test_config=None):
             app.logger.exception("Skill rebuild failed for uid=%s", uid)
             raise click.ClickException("Skill rebuild failed; check server logs") from exc
         click.echo(json.dumps(summary, indent=2))
+
+    @app.cli.command("process-cf-sync-queue")
+    @click.option("--limit", default=1, type=click.IntRange(1, 20), show_default=True)
+    def process_cf_sync_queue_command(limit):
+        """Process up to N queued Codeforces sync requests, then exit."""
+        results = []
+        for _ in range(limit):
+            outcome = process_one_sync_request()
+            if outcome is None:
+                break
+            results.append(outcome)
+        click.echo(json.dumps({"processed": len(results), "jobs": results}, indent=2))
 
     @app.cli.command("grant-admin")
     @click.argument("username")

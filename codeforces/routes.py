@@ -97,6 +97,21 @@ def link_account(user):
                 "account": active.to_dict(),
             }, 200
 
+        if (active and active.sync_status == "RUNNING"
+                and active.handle.casefold() != canonical_handle.casefold()):
+            return {"message": "Wait for the active Codeforces import to finish before relinking"}, 409
+
+        if active and active.handle.casefold() != canonical_handle.casefold():
+            from models.codeforces_sync_request import CodeforcesSyncRequest
+            queued = db.session.execute(
+                db.select(CodeforcesSyncRequest.id).where(
+                    CodeforcesSyncRequest.codeforces_account_id == active.id,
+                    CodeforcesSyncRequest.status.in_(("QUEUED", "RUNNING")),
+                ).limit(1)
+            ).scalar_one_or_none()
+            if queued is not None:
+                return {"message": "Wait for the queued Codeforces sync to finish before relinking"}, 409
+
         if active and not confirm_relink:
             return {
                 "message": (
