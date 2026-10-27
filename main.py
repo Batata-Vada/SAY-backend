@@ -19,7 +19,6 @@ from codeforces.api_extra import codeforces_api
 from recommendations.api_alias import recommendation_api
 from analytics.routes import analytics
 from recommendations.routes import recommendations
-from models.recommendation_log import RecommendationLog
 from user_profile.routes import profile
 from user_education.routes import education
 
