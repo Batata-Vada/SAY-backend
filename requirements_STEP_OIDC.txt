@@ -1,3 +1,0 @@
-# Add these to requirements.txt (keep the existing pinned dependencies).
-PyJWT==2.13.0
-Pillow==12.3.0

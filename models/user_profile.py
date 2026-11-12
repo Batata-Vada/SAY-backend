@@ -1,5 +1,11 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from database.db import db
+
+
+def utc_now_for_legacy_column():
+    """Store naive UTC to match the existing SQLite DateTime columns."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
 
 class UserProfile(db.Model):
     __tablename__='user_profiles'
@@ -20,5 +26,5 @@ class UserProfile(db.Model):
     show_codeforces=db.Column(db.Boolean,nullable=False,default=True)
     show_codechef=db.Column(db.Boolean,nullable=False,default=True)
     avatar_filename=db.Column(db.String(64),nullable=True)  # Uploaded to SAY instance storage
-    created_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow)
-    updated_at=db.Column(db.DateTime,nullable=False,default=datetime.utcnow,onupdate=datetime.utcnow)
+    created_at=db.Column(db.DateTime,nullable=False,default=utc_now_for_legacy_column)
+    updated_at=db.Column(db.DateTime,nullable=False,default=utc_now_for_legacy_column,onupdate=utc_now_for_legacy_column)
