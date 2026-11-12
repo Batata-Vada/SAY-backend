@@ -1,0 +1,133 @@
+# 1. Run GET /auth/codeforces/login by opening it IN A BROWSER (not REST Client).
+# 2. Sign in to Codeforces and approve the OAuth app.
+# 3. After backend callback sets HttpOnly say_session cookie, copy its value
+#    from browser developer tools (Application -> Cookies -> localhost).
+# 4. Paste cookie only into a private .vscode/*.local.http copy of this file.
+#    NEVER commit the real cookie/token.
+@baseUrl = http://localhost:5001
+@cookie = REPLACE_WITH_say_session_cookie
+@problemId = 1
+@threadId = 1
+@replyId = 1
+
+### Login redirect (open URL in browser rather than REST Client)
+GET {{baseUrl}}/auth/codeforces/login
+
+### Confirm Codeforces-authenticated SAY session
+GET {{baseUrl}}/auth/session
+Cookie: say_session={{cookie}}
+
+### Request CSRF token (required for cookie-authenticated POST/PUT/PATCH/DELETE)
+# @name csrf
+GET {{baseUrl}}/auth/csrf
+Cookie: say_session={{cookie}}
+
+### SAY account information (no password/email)
+GET {{baseUrl}}/me
+Cookie: say_session={{cookie}}
+
+### Codeforces verified link
+GET {{baseUrl}}/api/codeforces/account
+Cookie: say_session={{cookie}}
+
+### Codeforces contest rating, cached from verified ID token
+GET {{baseUrl}}/api/me/codeforces-rating
+Cookie: say_session={{cookie}}
+
+### Refresh current Codeforces contest rating using public user.info
+GET {{baseUrl}}/api/me/codeforces-rating?refresh=true
+Cookie: say_session={{cookie}}
+
+### Verify a password login is rejected
+POST {{baseUrl}}/login
+Content-Type: application/json
+
+{"name":"sid_test","password":"wrong"}
+
+### Synchronize current authenticated CF account
+POST {{baseUrl}}/api/codeforces/sync
+Cookie: say_session={{cookie}}
+X-SAY-CSRF: {{csrf.response.body.$.csrf_token}}
+Content-Type: application/json
+
+{"full":false}
+
+### Poll sync status
+GET {{baseUrl}}/api/codeforces/sync
+Cookie: say_session={{cookie}}
+
+### Problem history - choose a real canonical problem_id from here
+GET {{baseUrl}}/api/me/progress?limit=10
+Cookie: say_session={{cookie}}
+
+### User skill estimates
+GET {{baseUrl}}/api/me/mastery
+Cookie: say_session={{cookie}}
+
+### SAY profile, independent of Codeforces
+GET {{baseUrl}}/api/me/say-profile
+Cookie: say_session={{cookie}}
+
+### Update SAY display name and bio
+PATCH {{baseUrl}}/api/me/say-profile
+Cookie: say_session={{cookie}}
+X-SAY-CSRF: {{csrf.response.body.$.csrf_token}}
+Content-Type: application/json
+
+{"display_name":"SAY Learner","bio":"Learning greedy and DP"}
+
+### List problem forum threads (set a real CODEFORCES problem_id above)
+GET {{baseUrl}}/api/problems/{{problemId}}/forum/threads?limit=20
+Cookie: say_session={{cookie}}
+
+### Create a problem thread
+# @name createThread
+POST {{baseUrl}}/api/problems/{{problemId}}/forum/threads
+Cookie: say_session={{cookie}}
+X-SAY-CSRF: {{csrf.response.body.$.csrf_token}}
+Content-Type: application/json
+
+{"title":"How can I approach this problem?","body":"I tried sorting first. Is that the right direction?","spoiler":false}
+
+### Read a created thread using named response
+GET {{baseUrl}}/api/forum/threads/{{createThread.response.body.$.thread.id}}
+Cookie: say_session={{cookie}}
+
+### Create a reply
+POST {{baseUrl}}/api/forum/threads/{{createThread.response.body.$.thread.id}}/replies
+Cookie: say_session={{cookie}}
+X-SAY-CSRF: {{csrf.response.body.$.csrf_token}}
+Content-Type: application/json
+
+{"body":"Try identifying the greedy invariant.","spoiler":true}
+
+### View replies, reveal spoilers deliberately
+GET {{baseUrl}}/api/forum/threads/{{createThread.response.body.$.thread.id}}/replies?reveal_spoilers=true
+Cookie: say_session={{cookie}}
+
+### Upvote a thread
+PUT {{baseUrl}}/api/forum/threads/{{createThread.response.body.$.thread.id}}/vote
+Cookie: say_session={{cookie}}
+X-SAY-CSRF: {{csrf.response.body.$.csrf_token}}
+Content-Type: application/json
+
+{"value":1}
+
+### Avatar upload example (REST Client supports multipart include from local file)
+# Put an avatar.png in the same directory as this .http file before sending.
+POST {{baseUrl}}/api/me/avatar
+Cookie: say_session={{cookie}}
+X-SAY-CSRF: {{csrf.response.body.$.csrf_token}}
+Content-Type: multipart/form-data; boundary=RESTClientBoundary
+
+--RESTClientBoundary
+Content-Disposition: form-data; name="file"; filename="avatar.png"
+Content-Type: image/png
+
+< ./avatar.png
+--RESTClientBoundary--
+
+### Logout
+POST {{baseUrl}}/auth/logout
+Cookie: say_session={{cookie}}
+X-SAY-CSRF: {{csrf.response.body.$.csrf_token}}
