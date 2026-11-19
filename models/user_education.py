@@ -1,6 +1,11 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from database.db import db
+
+
+def utc_now_for_legacy_column():
+    """Store naive UTC to match the existing SQLite DateTime columns."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class UserEducation(db.Model):
@@ -27,11 +32,11 @@ class UserEducation(db.Model):
     created_at = db.Column(
         db.DateTime,
         nullable=False,
-        default=datetime.utcnow,
+        default=utc_now_for_legacy_column,
     )
     updated_at = db.Column(
         db.DateTime,
         nullable=False,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=utc_now_for_legacy_column,
+        onupdate=utc_now_for_legacy_column,
     )

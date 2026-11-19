@@ -28,6 +28,9 @@ PROFILE_FIELDS = (
 def serialize_profile(user_profile):
     return {
         "id": user_profile.id,
+        "display_name": user_profile.display_name,
+        "bio": user_profile.bio or "",
+        "avatar_url": f"/api/avatars/{user_profile.avatar_filename}" if user_profile.avatar_filename else None,
         "instagram_url": user_profile.instagram_url or "",
         "x_url": user_profile.x_url or "",
         "linkedin_url": user_profile.linkedin_url or "",
@@ -120,6 +123,8 @@ def get_public_profile(username):
         "uid": user.uid,
         "username": user.name,
         "name": user.name,
+        "display_name": user_profile.display_name if user_profile and user_profile.display_name else user.name,
+        "avatar_url": f"/api/avatars/{user_profile.avatar_filename}" if user_profile and user_profile.avatar_filename else None,
         "bio": user_profile.bio or "" if user_profile else "",
         "education": [],
         "instagram_url": "",

@@ -12,6 +12,7 @@ from sqlalchemy import inspect
 from config import Config
 from database.db import db, migrate
 from auth.routes import auth
+from auth.oidc import cf_oidc
 from users.routes import users
 from submissions.routes import submissions
 from codeforces.routes import codeforces
@@ -21,6 +22,8 @@ from analytics.routes import analytics
 from recommendations.routes import recommendations
 from user_profile.routes import profile
 from user_education.routes import education
+from forum.routes import forum
+from say_profile.routes import say_profile
 
 # Alembic must see all ORM tables before migration autogeneration.
 from models.users import User
@@ -35,6 +38,8 @@ from models.user_topic_mastery import UserTopicMastery, UserDifficultyReadiness
 from models.recommendation_log import RecommendationLog
 from models.user_profile import UserProfile
 from models.user_education import UserEducation
+from models.codeforces_oidc_identity import CodeforcesOidcIdentity, OidcLoginState
+from models.forum import ForumThread, ForumReply, ForumVote
 
 from problem_stats.sync import sync_codeforces_problems
 from codeforces.sync_queue import process_one_sync_request
@@ -42,6 +47,7 @@ from codeforces.submission_sync import sync_codeforces_submissions
 from codeforces.reconciliation import reconcile_unresolved_submissions
 from analytics.progress import rebuild_user_progress, ProgressBuildError
 from analytics.mastery import rebuild_user_skills, SkillEstimateError
+from scripts.legacy_merge import merge_empty_verified_identity_into_legacy
 
 
 def create_app(test_config=None):
@@ -64,8 +70,8 @@ def create_app(test_config=None):
     CORS(
         app,
         resources={r"/*": {"origins": origins}},
-        supports_credentials=False,
-        allow_headers=["Content-Type", "Authorization"],
+        supports_credentials=True,
+        allow_headers=["Content-Type", "Authorization", "X-SAY-CSRF"],
         methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     )
     db.init_app(app)
@@ -81,6 +87,9 @@ def create_app(test_config=None):
     app.register_blueprint(recommendations)
     app.register_blueprint(profile, url_prefix="/profile")
     app.register_blueprint(education, url_prefix="/education")
+    app.register_blueprint(cf_oidc)
+    app.register_blueprint(forum)
+    app.register_blueprint(say_profile)
     
 
 
@@ -218,6 +227,19 @@ def create_app(test_config=None):
                 click.echo(repr(item), err=True)
             raise click.ClickException("Schema differs from models; inspect differences")
         click.echo("Schema matches SQLAlchemy models according to Alembic autogenerate")
+    @app.cli.command("adopt-legacy-oidc")
+    @click.option("--legacy-uid",required=True,type=click.IntRange(min=1))
+    @click.option("--verified-uid",required=True,type=click.IntRange(min=1))
+    @click.option("--confirm-reviewed-ownership",is_flag=True,required=True)
+    def adopt_legacy_oidc(legacy_uid,verified_uid,confirm_reviewed_ownership):
+        """ONE-TIME: move a verified identity to a reviewed historical SAY uid."""
+        try:
+            result=merge_empty_verified_identity_into_legacy(legacy_uid,verified_uid)
+        except ValueError as exc:
+            db.session.rollback()
+            raise click.ClickException(str(exc)) from exc
+        click.echo(json.dumps(result,indent=2))
+
     return app
 
 

@@ -22,3 +22,7 @@ six==1.17.0
 soupsieve==3.0.3
 typing_extensions==4.16.0
 urllib3==2.8.0
+
+# Codeforces OpenID Connect and SAY avatar uploads
+PyJWT==2.13.0
+Pillow==12.3.0
