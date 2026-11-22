@@ -48,16 +48,16 @@ PY
 
 1. Sign in to Codeforces and open https://codeforces.com/settings/api.
 2. Create an OAuth application (Codeforces's OIDC announcement points to API settings).
-3. For local development, register the exact callback URI `http://localhost:5001/auth/codeforces/callback` **if permitted by Codeforces**. If localhost HTTP callbacks aren't accepted, use an HTTPS development origin and register that exact URI.
+3. For local development, register the exact callback URI `http://127.0.0.1:5001/auth/codeforces/callback` **if permitted by Codeforces**. If loopback HTTP callbacks aren't accepted, use an HTTPS development origin and register that exact URI.
 4. Obtain `client_id` and `client_secret` for that OAuth app. Keep the secret on the backend only.
 5. Configure `.env` (never commit):
 
 ```dotenv
 CODEFORCES_OIDC_CLIENT_ID=REPLACE_WITH_OAUTH_APP_ID
 CODEFORCES_OIDC_CLIENT_SECRET=REPLACE_WITH_OAUTH_APP_SECRET
-CODEFORCES_OIDC_REDIRECT_URI=http://localhost:5001/auth/codeforces/callback
-SAY_FRONTEND_URL=http://localhost:3000
-CORS_ORIGINS=http://localhost:3000
+CODEFORCES_OIDC_REDIRECT_URI=http://127.0.0.1:5001/auth/codeforces/callback
+SAY_FRONTEND_URL=http://127.0.0.1:3000
+CORS_ORIGINS=http://127.0.0.1:3000
 SAY_COOKIE_SECURE=false
 # Retain your existing strong SECRET_KEY and DATABASE_URL settings.
 ```
@@ -123,7 +123,7 @@ python main.py
 
 Open this URL in **a browser**:
 
-`http://localhost:5001/auth/codeforces/login`
+`http://127.0.0.1:5001/auth/codeforces/login`
 
 This creates a one-use state, redirects to Codeforces, returns to the registered callback, validates the HS256 ID token (`iss`, `aud`, signature, expiry, `sub` and optional `nonce`), creates/loads the user's SAY `uid`, binds the verified handle and contest rating, issues a new provider-tagged SAY session, and sets an **HttpOnly, SameSite=Lax** session cookie. The browser redirects to the configured SAY frontend URL with `?login=success` (the frontend must implement the post-login UI).
 

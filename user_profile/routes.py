@@ -1,6 +1,6 @@
 from flask import Blueprint, jsonify, request
 
-from middleware.auth import login_required
+from middleware.auth import cookie_login_required
 from database.db import db
 from models.user_profile import UserProfile
 from models.users import User
@@ -58,7 +58,7 @@ def get_or_create_profile(user_id):
 
 
 @profile.route("/me", methods=["GET"])
-@login_required
+@cookie_login_required
 def get_my_profile(user):
     user_profile = get_or_create_profile(user.uid)
     db.session.commit()
@@ -69,7 +69,7 @@ def get_my_profile(user):
 
 
 @profile.route("/me", methods=["PUT"])
-@login_required
+@cookie_login_required
 def save_my_profile(user):
     data = request.get_json(silent=True)
 

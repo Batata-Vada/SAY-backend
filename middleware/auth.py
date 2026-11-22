@@ -42,8 +42,12 @@ def _token_and_source():
     return request.cookies.get(current_app.config.get('SAY_SESSION_COOKIE','say_session')),'cookie'
 
 
-def _session_from_request():
-    token, source = _token_and_source()
+def _session_from_request(cookie_only=False):
+    if cookie_only:
+        token = request.cookies.get(current_app.config.get('SAY_SESSION_COOKIE','say_session'))
+        source = 'cookie'
+    else:
+        token, source = _token_and_source()
     if not token:
         return None,None,None
     try:
@@ -72,8 +76,8 @@ def csrf_for_token(token):
     return hmac.new(secret,('say-csrf:'+digest).encode('ascii'),hashlib.sha256).hexdigest()
 
 
-def _authorized():
-    user, token, source = _session_from_request()
+def _authorized(cookie_only=False):
+    user, token, source = _session_from_request(cookie_only=cookie_only)
     if user is None:
         return None,({'message':'Codeforces login required'},401)
     if source == 'cookie' and request.method in _UNSAFE:
@@ -87,6 +91,15 @@ def login_required(fn):
     @wraps(fn)
     def wrapper(*args,**kwargs):
         user,error = _authorized()
+        return error if error else fn(user,*args,**kwargs)
+    return wrapper
+
+
+def cookie_login_required(fn):
+    """Authenticate this endpoint only from the HttpOnly SAY session cookie."""
+    @wraps(fn)
+    def wrapper(*args,**kwargs):
+        user,error = _authorized(cookie_only=True)
         return error if error else fn(user,*args,**kwargs)
     return wrapper
 

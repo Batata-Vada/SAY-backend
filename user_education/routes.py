@@ -1,6 +1,6 @@
 from flask import Blueprint, jsonify, request
 
-from middleware.auth import login_required
+from middleware.auth import cookie_login_required
 from database.db import db
 from models.user_education import UserEducation
 
@@ -43,7 +43,7 @@ def parse_year(value, field, required=False):
 
 
 @education.route("/me", methods=["GET"])
-@login_required
+@cookie_login_required
 def get_my_education(user):
     records = (
         UserEducation.query
@@ -58,7 +58,7 @@ def get_my_education(user):
 
 
 @education.route("/me", methods=["PUT"])
-@login_required
+@cookie_login_required
 def save_my_education(user):
     data = request.get_json(silent=True)
 
