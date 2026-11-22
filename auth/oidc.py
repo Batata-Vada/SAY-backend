@@ -47,21 +47,34 @@ def _cookie_options():
     return dict(httponly=True,secure=bool(current_app.config.get('SAY_COOKIE_SECURE',False)),samesite='Lax',path='/')
 
 
+def _log_oidc_cookie(event, max_age, cookie_set):
+    options=_cookie_options()
+    current_app.logger.info(
+        'Codeforces OIDC %s host=%s cookie_name=say_oidc_state '
+        'set=%s httponly=%s secure=%s samesite=%s path=%s domain=%s max_age=%s',
+        event,request.host,cookie_set,options['httponly'],options['secure'],options['samesite'],
+        options['path'],None,max_age)
+
+
 @cf_oidc.get('/auth/codeforces/login')
 def codeforces_login():
     client_id,_,callback,_ = _cfg()
     state=secrets.token_urlsafe(32)
     nonce=secrets.token_urlsafe(32)
+    current_app.logger.info('Codeforces OIDC login state generated')
     now=datetime.now(timezone.utc)
     # Expire/reject browser login attempts; state is never accepted from JSON input.
     # Bound the state table: consumed or expired requests can be discarded.
     db.session.execute(db.delete(OidcLoginState).where(OidcLoginState.expires_at < now))
     db.session.add(OidcLoginState(state_digest=_digest(state),nonce=nonce,expires_at=now+timedelta(minutes=10)))
     db.session.commit()
+    current_app.logger.info('Codeforces OIDC login state record committed')
     params={'client_id':client_id,'redirect_uri':callback,'response_type':'code',
             'scope':'openid','state':state,'nonce':nonce}
     resp=redirect('https://codeforces.com/oauth/authorize?'+urlencode(params),code=302)
     resp.set_cookie('say_oidc_state',state,max_age=600,**_cookie_options())
+    cookie_set=any(value.startswith('say_oidc_state=') for value in resp.headers.getlist('Set-Cookie'))
+    _log_oidc_cookie('login response cookie',600,cookie_set)
     resp.headers['Cache-Control']='no-store'
     return resp
 
@@ -121,13 +134,23 @@ def codeforces_callback():
         return {'message':'OIDC is not configured'},503
     supplied_state=request.args.get('state','')
     cookie_state=request.cookies.get('say_oidc_state','')
-    if not supplied_state or not cookie_state or not secrets.compare_digest(supplied_state,cookie_state):
+    state_present=bool(supplied_state)
+    cookie_present=bool(cookie_state)
+    state_matches=bool(state_present and cookie_present and secrets.compare_digest(supplied_state,cookie_state))
+    current_app.logger.info(
+        'Codeforces OIDC callback state query_present=%s cookie_present=%s values_match=%s host=%s',
+        state_present,cookie_present,state_matches,request.host)
+    if not state_present or not cookie_present or not state_matches:
         return {'message':'OIDC state mismatch; restart login'},400
     if not request.args.get('code') or request.args.get('error'):
         return {'message':'Codeforces authentication was cancelled or denied'},400
     attempt=db.session.get(OidcLoginState,_digest(supplied_state))
     now=datetime.now(timezone.utc)
-    if not attempt or attempt.used_at is not None or (attempt.expires_at.replace(tzinfo=timezone.utc) if attempt.expires_at.tzinfo is None else attempt.expires_at) < now:
+    expired=bool(attempt and (attempt.expires_at.replace(tzinfo=timezone.utc) if attempt.expires_at.tzinfo is None else attempt.expires_at) < now)
+    current_app.logger.info(
+        'Codeforces OIDC callback database attempt found=%s used=%s expired=%s',
+        bool(attempt),bool(attempt and attempt.used_at is not None),expired)
+    if not attempt or attempt.used_at is not None or expired:
         return {'message':'OIDC login attempt expired or already used'},400
     # Commit consumption *before* external calls so callbacks cannot be replayed.
     nonce=attempt.nonce

@@ -1,6 +1,8 @@
 """SAY Flask application and database-management commands."""
 import json
+import logging
 import os
+import re
 
 import click
 from alembic.autogenerate import compare_metadata
@@ -50,7 +52,25 @@ from analytics.mastery import rebuild_user_skills, SkillEstimateError
 from scripts.legacy_merge import merge_empty_verified_identity_into_legacy
 
 
+class OidcCallbackQueryRedactionFilter(logging.Filter):
+    """Keep browser access logs from recording OIDC state and authorization codes."""
+    def filter(self, record):
+        message = record.getMessage()
+        if '/auth/codeforces/callback?' in message:
+            record.msg = re.sub(
+                r'(/auth/codeforces/callback)\?[^\s\"]*',
+                r'\1?[query redacted]',
+                message,
+            )
+            record.args = ()
+        return True
+
+
 def create_app(test_config=None):
+    werkzeug_logger = logging.getLogger("werkzeug")
+    if not any(isinstance(f, OidcCallbackQueryRedactionFilter) for f in werkzeug_logger.filters):
+        werkzeug_logger.addFilter(OidcCallbackQueryRedactionFilter())
+
     app = Flask(__name__)
     app.config.from_object(Config)
     if test_config:

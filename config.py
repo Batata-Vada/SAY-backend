@@ -16,8 +16,8 @@ class Config:
     # Codeforces OIDC: credentials issued in https://codeforces.com/settings/api
     CODEFORCES_OIDC_CLIENT_ID = os.getenv("CODEFORCES_OIDC_CLIENT_ID", "")
     CODEFORCES_OIDC_CLIENT_SECRET = os.getenv("CODEFORCES_OIDC_CLIENT_SECRET", "")
-    CODEFORCES_OIDC_REDIRECT_URI = os.getenv("CODEFORCES_OIDC_REDIRECT_URI", "http://localhost:5001/auth/codeforces/callback")
-    SAY_FRONTEND_URL = os.getenv("SAY_FRONTEND_URL", "http://localhost:3000")
+    CODEFORCES_OIDC_REDIRECT_URI = os.getenv("CODEFORCES_OIDC_REDIRECT_URI", "http://127.0.0.1:5001/auth/codeforces/callback")
+    SAY_FRONTEND_URL = os.getenv("SAY_FRONTEND_URL", "http://127.0.0.1:3000")
     SAY_SESSION_COOKIE = "say_session"
     SAY_COOKIE_SECURE = env_bool("SAY_COOKIE_SECURE", False)  # True under HTTPS in production
     MAX_CONTENT_LENGTH = 3 * 1024 * 1024
