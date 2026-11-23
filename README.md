@@ -401,3 +401,15 @@ A local `.env` value takes precedence over the default; update any previous
 five-second starts but can take longer when Codeforces is slow, history
 paging is required, multiple users are active, or the host-wide rate limiter
 delays calls. Project Red's separate dataset-export interval is 180 seconds.
+
+### Project Red eligibility without contest participation
+
+SAY does not require any minimum number of rated Codeforces contests or
+total solved problems before trying Project Red inference. The response
+continues to report solved-problem and rated-contest counts for context only.
+A synchronized linked account can attempt inference when
+`PROJECT_RED_ENABLED=true` and the required verified, timed practice
+features are available. The separate five-distinct-prior-timed-solves
+historical training requirement remains unchanged; the recommender falls
+back safely when features, a validated model artifact, or suitable candidate
+problems are unavailable.

@@ -153,10 +153,10 @@ def generate_recommendations(uid: int, limit: int = 10, mode: str = "new") -> di
     selected_version = MODEL_VERSION
     solved_count = sum(bool(row.is_solved) for row in progress_rows)
     contest_count = account.rated_contests if account is not None else None
-    if account is None or contest_count is None:
+    # Rated-contest participation and total solved-problem count are informative
+    # metadata, not requirements for using Project Red.
+    if account is None or account.last_synced_at is None:
         selection_reason = "account_history_unavailable"
-    elif solved_count <= 10 and contest_count <= 5:
-        selection_reason = "new_user"
     elif not current_app.config.get("PROJECT_RED_ENABLED", True):
         selection_reason = "project_red_disabled"
     else:
