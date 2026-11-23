@@ -49,6 +49,7 @@ from models.discussion import DiscussionPost, DiscussionReply
 
 from problem_stats.sync import sync_codeforces_problems
 from codeforces.sync_queue import process_one_sync_request
+from codeforces.practice_watcher import run_worker
 from codeforces.submission_sync import sync_codeforces_submissions
 from codeforces.reconciliation import reconcile_unresolved_submissions
 from analytics.progress import rebuild_user_progress, ProgressBuildError
@@ -196,6 +197,11 @@ def create_app(test_config=None):
             app.logger.exception("Skill rebuild failed for uid=%s", uid)
             raise click.ClickException("Skill rebuild failed; check server logs") from exc
         click.echo(json.dumps(summary, indent=2))
+
+    @app.cli.command("watch-cf-practice")
+    def watch_cf_practice_command():
+        """Continuously sync active practice sessions and queued account refreshes."""
+        run_worker()
 
     @app.cli.command("process-cf-sync-queue")
     @click.option("--limit", default=1, type=click.IntRange(1, 20), show_default=True)

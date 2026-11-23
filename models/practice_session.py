@@ -26,12 +26,18 @@ class PracticeSession(db.Model):
     )
 
     def to_dict(self, verified=False):
+        def iso_utc(value):
+            if value is None:
+                return None
+            value = value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+            return value.isoformat()
+
         return {
             "id": self.id,
             "problem_id": self.problem_id,
             "status": self.status,
-            "started_at": self.started_at.isoformat(),
-            "finished_at": self.finished_at.isoformat() if self.finished_at else None,
+            "started_at": iso_utc(self.started_at),
+            "finished_at": iso_utc(self.finished_at),
             "duration_seconds": self.duration_seconds,
             "official_solve_verified": bool(verified),
             "recommendation_run_id": self.recommendation_run_id,

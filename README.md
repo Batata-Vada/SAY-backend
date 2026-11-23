@@ -256,3 +256,39 @@ CLI option names. Existing queued sync workers continue to work.
 Legacy `project_red_v5` files remain in Git history for reproducibility but
 are not loaded by the new serving path. The old model was trained on synthetic
 difficulty-window targets; SAY does not silently fall back to that model.
+
+## Automatic Codeforces practice synchronization
+
+Run a single persistent watcher alongside the Flask web process:
+
+```bash
+flask --app main watch-cf-practice
+```
+
+The watcher checks active practice sessions approximately every 30 seconds,
+subject to the shared Codeforces API rate limiter and number of active users.
+It runs in a separate process, not within an HTTP request or Flask thread.
+It also processes jobs submitted through the existing `/api/codeforces/sync`
+queue, so no manual queue-worker command is needed while it is running.
+Run only one watcher on a local SQLite installation.
+
+Optional environment variables:
+
+```dotenv
+CODEFORCES_WATCH_INTERVAL_SECONDS=30
+CODEFORCES_WATCH_BATCH_SIZE=10
+CODEFORCES_WATCH_PAGE_LIMIT=10
+```
+
+On an official individual `OK` verdict with `TESTS`, the watcher finishes
+the matching active session using the Codeforces submission timestamp. Other
+verdicts keep the timer active. Progress and skill estimates are rebuilt after
+new or changed official submissions. The existing practice session listing
+now also exposes `latest_verdict`, `latest_submission_id`,
+`elapsed_seconds`, and `last_checked_at`. Reloading the frontend does
+not reset the server-side timer.
+
+Practice shorter than 60 seconds and sessions exceeding four hours do not
+qualify as timed training events. Recent polling does not assert complete
+submission-history coverage; the standard full sync is still needed to
+establish reliable failed-outcome labels for Project Red.

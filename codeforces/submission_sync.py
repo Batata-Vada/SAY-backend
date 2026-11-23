@@ -265,3 +265,68 @@ def sync_codeforces_submissions(
                 # last_synced_at must remain unchanged on failure.
                 db.session.commit()
             raise
+
+
+def sync_active_practice_submissions(
+    account_id, *, started_at, page_size=100, max_pages=10, client=None
+):
+    """Import recent official submissions covering an active practice session.
+
+    This lightweight sync does not claim full-history coverage, change account
+    identity, or run inside a Flask request. A complete normal sync remains
+    available through the existing queue.
+    """
+    if type(account_id) is not int or account_id < 1:
+        raise ValueError("Invalid account ID")
+    if type(page_size) is not int or not 1 <= page_size <= 1000:
+        raise ValueError("Invalid page size")
+    if type(max_pages) is not int or not 1 <= max_pages <= 100:
+        raise ValueError("Invalid page limit")
+    cutoff = _as_utc(started_at)
+    if cutoff is None:
+        raise ValueError("Active practice start is required")
+    with exclusive_account_sync(account_id):
+        account = db.session.get(CodeforcesAccount, account_id)
+        if (account is None or account.unlinked_at is not None
+                or not account.ownership_verified):
+            raise SubmissionSyncError("Verified Codeforces account not found")
+        client = client or CodeforcesClient()
+        info = client.user_info(account.handle)
+        canonical = info.get("handle")
+        if not isinstance(canonical, str) or canonical.casefold() != account.handle.casefold():
+            raise SubmissionSyncError("Codeforces handle changed; relink the account")
+        registration = info.get("registrationTimeSeconds")
+        if (account.registration_time_seconds is not None
+                and registration != account.registration_time_seconds):
+            raise SubmissionSyncError("Codeforces account identity changed; relink the account")
+
+        lookup = codeforces_problem_lookup()
+        seen_ids = set()
+        stats = {
+            "inserted": 0, "updated": 0, "unchanged": 0,
+            "previously_known": 0, "unique_seen": 0, "pages_completed": 0,
+        }
+        start_index = 1
+        covered = False
+        for _ in range(max_pages):
+            page = client.user_status(account.handle, from_index=start_index, count=page_size)
+            parsed = _apply_page(account.id, account.handle, page, lookup, seen_ids, stats)
+            if len(page) < page_size:
+                covered = True
+                break
+            if parsed and min(_as_utc(row["submitted_at"]) for row in parsed) <= cutoff:
+                covered = True
+                break
+            start_index += len(page)
+        if not covered:
+            raise SubmissionSyncError(
+                "Recent submissions exceeded the page limit; increase CODEFORCES_WATCH_PAGE_LIMIT"
+            )
+        reconcile_unresolved_submissions(account.id)
+        account = db.session.get(CodeforcesAccount, account_id)
+        account.sync_status = "SUCCEEDED"
+        account.last_sync_error = None
+        account.last_synced_at = datetime.now(timezone.utc)
+        # Do not touch last_full_sync_at: this is only a recent-window import.
+        db.session.commit()
+        return stats

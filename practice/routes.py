@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from flask import Blueprint, request
 
@@ -8,6 +8,7 @@ from middleware.auth import login_required
 from models.practice_session import PracticeSession
 from models.problem import Problem
 from recommendations.feature_history import official_solved_in_session
+from models.codeforces_submission import CodeforcesSubmission
 from models.recommendation_log import RecommendationLog
 from uuid import UUID
 
@@ -16,6 +17,36 @@ practice = Blueprint("practice", __name__, url_prefix="/api/me/practice-sessions
 
 def _utc(value):
     return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+
+
+def session_payload(row, account):
+    data = row.to_dict(official_solved_in_session(row))
+    deadline = _utc(row.started_at) + timedelta(seconds=14400)
+    last_attempt = db.session.execute(
+        db.select(CodeforcesSubmission).where(
+            CodeforcesSubmission.codeforces_account_id == row.source_account_id,
+            CodeforcesSubmission.problem_id == row.problem_id,
+            CodeforcesSubmission.attribution_status == "INDIVIDUAL",
+            CodeforcesSubmission.submitted_at >= row.started_at,
+            CodeforcesSubmission.submitted_at <= (row.finished_at or deadline),
+        ).order_by(
+            CodeforcesSubmission.submitted_at.desc(),
+            CodeforcesSubmission.cf_submission_id.desc(),
+        ).limit(1)
+    ).scalar_one_or_none()
+    data.update({
+        "latest_verdict": last_attempt.verdict if last_attempt else None,
+        "latest_submission_id": last_attempt.cf_submission_id if last_attempt else None,
+        "last_checked_at": (
+            _utc(account.last_synced_at).isoformat()
+            if account and account.last_synced_at else None
+        ),
+        "elapsed_seconds": (
+            max(0, int((datetime.now(timezone.utc) - _utc(row.started_at)).total_seconds()))
+            if row.status == "ACTIVE" else row.duration_seconds
+        ),
+    })
+    return data
 
 
 @practice.get("")
@@ -40,7 +71,7 @@ def list_sessions(user):
     rows = db.session.execute(
         query.order_by(PracticeSession.started_at.desc(), PracticeSession.id.desc()).limit(30)
     ).scalars().all()
-    return {"sessions": [row.to_dict(official_solved_in_session(row)) for row in rows]}, 200, {
+    return {"sessions": [session_payload(row, account) for row in rows]}, 200, {
         "Cache-Control": "private, no-store"
     }
 
@@ -91,7 +122,7 @@ def start_session(user):
                           recommendation_run_id=run_id)
     db.session.add(row)
     db.session.commit()
-    return {"session": row.to_dict()}, 201, {"Cache-Control": "no-store"}
+    return {"session": session_payload(row, account)}, 201, {"Cache-Control": "no-store"}
 
 
 @practice.post("/<int:session_id>/finish")
@@ -116,8 +147,7 @@ def finish_session(user, session_id):
     row.finished_at = finished
     row.duration_seconds = elapsed
     db.session.commit()
-    verified = official_solved_in_session(row)
-    return {"session": row.to_dict(verified),
-            "message": "Session recorded. An official Codeforces accepted submission is required for model training."}, 200, {
+    return {"session": session_payload(row, account),
+            "message": "Session recorded. SAY will verify official Codeforces submissions automatically while its worker is running."}, 200, {
         "Cache-Control": "no-store"
     }
