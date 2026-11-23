@@ -58,7 +58,7 @@ def resolve():
     env["NEXT_PUBLIC_API_URL"] = env.get("NEXT_PUBLIC_API_URL", "http://127.0.0.1:5001")
     # Relative model paths in the backend resolve from the backend repository root.
     # Explicit deployment model paths remain authoritative.
-    env.setdefault("PROJECT_RED_MODEL_PATH", str(PROJECT_RED / "artifacts/online_v1/model.json"))
+    env.setdefault("PROJECT_RED_MODEL_PATH", str(PROJECT_RED / "artifacts/real_v1/model.json"))
     env["PYTHONUNBUFFERED"] = "1"
     return backend_python, project_python, npm, env
 

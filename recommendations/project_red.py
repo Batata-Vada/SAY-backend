@@ -50,6 +50,28 @@ def _load_artifact(path, signature):
         raise ValueError("Invalid model scaler")
     if artifact["coef"][0] >= 0:
         raise ValueError("Model probability must decrease with candidate difficulty")
+    if artifact.get("source") != "real_verified_practice_outcomes":
+        raise ValueError("Project Red model is not trained exclusively on verified real outcomes")
+    validation = artifact.get("validation")
+    if not isinstance(validation, dict) or validation.get("passed") is not True:
+        raise ValueError("Project Red model has not passed real-data validation")
+    if (
+        type(validation.get("training_rows")) is not int
+        or validation["training_rows"] < 200
+        or type(validation.get("training_users")) is not int
+        or validation["training_users"] < 10
+    ):
+        raise ValueError("Insufficient validated real-data training evidence")
+    for metric, baseline in (
+        ("time_holdout_brier", "time_holdout_baseline_brier"),
+        ("user_holdout_brier", "user_holdout_baseline_brier"),
+    ):
+        if (
+            not _finite(validation.get(metric))
+            or not _finite(validation.get(baseline))
+            or validation[metric] >= validation[baseline]
+        ):
+            raise ValueError("Project Red model failed held-out baseline comparison")
     target = artifact.get("target_probability", 0.60)
     bounds = artifact.get("acceptable_probability_range", [0.45, 0.75])
     grid = artifact.get("rating_grid", [800, 3500, 100])
@@ -74,6 +96,20 @@ def _artifact():
     path = path.resolve()
     signature = (path.stat().st_mtime_ns, path.stat().st_size)
     return _load_artifact(str(path), signature)
+
+
+def model_status():
+    """Safe status for authenticated users; never disclose the model path or export keys."""
+    path = Path(current_app.config["PROJECT_RED_MODEL_PATH"])
+    if not path.is_absolute():
+        path = Path(__file__).resolve().parents[1] / path
+    if not path.is_file():
+        return {"ready": False, "version": None, "reason": "model_not_deployed"}
+    try:
+        model = _artifact()
+    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+        return {"ready": False, "version": None, "reason": "model_not_validated"}
+    return {"ready": True, "version": model["model_version"], "reason": "model_validated"}
 
 
 def solve_probability(profile, candidate_rating, artifact):

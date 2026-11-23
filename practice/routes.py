@@ -13,6 +13,8 @@ from recommendations.feature_history import (
 )
 from models.codeforces_submission import CodeforcesSubmission
 from models.recommendation_log import RecommendationLog
+from recommendations.project_red import model_status
+from flask import current_app
 from uuid import UUID
 
 practice = Blueprint("practice", __name__, url_prefix="/api/me/practice-sessions")
@@ -92,7 +94,32 @@ def training_readiness(user):
         if account is not None else None
     )
     count = history["timed_solved_count"] if history else 0
+    model = model_status()
+    enabled = bool(current_app.config.get("PROJECT_RED_ENABLED", False))
+    if count < MIN_TRAINING_TIMED_SOLVES:
+        ml_state = "awaiting_history"
+        ml_message = "Complete five distinct verified timed solves to become eligible for ML inference."
+    elif not model["ready"]:
+        ml_state = model["reason"]
+        ml_message = (
+            "Your history is ready. Project Red still needs a model trained and "
+            "validated on sufficient real practice outcomes."
+        )
+    elif not enabled:
+        ml_state = "serving_disabled"
+        ml_message = "Your history and validated model are ready, but Project Red serving is disabled."
+    else:
+        ml_state = "eligible"
+        ml_message = (
+            "Your history and a validated model are ready. Refresh recommendations "
+            "to check whether Project Red selects a suitable difficulty window."
+        )
     return {
+        "ml_model_ready": model["ready"],
+        "ml_model_version": model["version"],
+        "ml_serving_enabled": enabled,
+        "ml_state": ml_state,
+        "ml_status_message": ml_message,
         "verified_timed_solves": count,
         "required_timed_solves": MIN_TRAINING_TIMED_SOLVES,
         "remaining_timed_solves": max(0, MIN_TRAINING_TIMED_SOLVES - count),
