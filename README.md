@@ -265,7 +265,7 @@ Run a single persistent watcher alongside the Flask web process:
 flask --app main watch-cf-practice
 ```
 
-The watcher checks active practice sessions approximately every 30 seconds,
+The watcher checks active practice sessions approximately every 5 seconds by default,
 subject to the shared Codeforces API rate limiter and number of active users.
 It runs in a separate process, not within an HTTP request or Flask thread.
 It also processes jobs submitted through the existing `/api/codeforces/sync`
@@ -275,7 +275,7 @@ Run only one watcher on a local SQLite installation.
 Optional environment variables:
 
 ```dotenv
-CODEFORCES_WATCH_INTERVAL_SECONDS=30
+CODEFORCES_WATCH_INTERVAL_SECONDS=5
 CODEFORCES_WATCH_BATCH_SIZE=10
 CODEFORCES_WATCH_PAGE_LIMIT=10
 ```
@@ -371,3 +371,33 @@ requiring a manual `rebuild-cf-progress`/`rebuild-cf-skills` command.
 
 If needed, restart the worker after updating this code. Its repair log line
 reads `Codeforces profile repair: ...` when a stale profile was fixed.
+
+### Diagnosing empty Project Red datasets
+
+`data/say_practice_events.jsonl` is not the same as `training_rows.csv`.
+The exporter includes qualifying finished practice sessions even when their
+outcomes are UNKNOWN or their historical features are unavailable.
+The dataset builder excludes unrated targets, previously solved targets,
+UNKNOWN outcomes, and targets without enough earlier timed history.
+A blank CSV apart from headers means there are currently zero eligible
+training labels; it is **not** evidence that the worker is broken.
+
+The backend requires five **distinct** rated, officially accepted, timed
+practice solves from the same active account, with final verdicts first
+observed **before the next target session starts**. Imported submissions
+without tracked SAY timers cannot be treated as timed solves. A later
+Codeforces submission after the session's recorded finish time is not
+retroactively inside that session.
+
+Authenticated `GET /api/me/practice-sessions/readiness` returns the number
+of real verified timed solves available for **future** sessions, remaining
+solves needed, and source sync status. The frontend surfaces this on Practice.
+This is a historical-data readiness indicator, not proof that the online model
+has trained or that Project Red inference was selected.
+
+`CODEFORCES_WATCH_INTERVAL_SECONDS` defaults to 5 and accepts values 5–3600.
+A local `.env` value takes precedence over the default; update any previous
+`CODEFORCES_WATCH_INTERVAL_SECONDS=30` setting to 5. Worker cycles target
+five-second starts but can take longer when Codeforces is slow, history
+paging is required, multiple users are active, or the host-wide rate limiter
+delays calls. Project Red's separate dataset-export interval is 180 seconds.

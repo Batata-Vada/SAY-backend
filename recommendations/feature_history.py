@@ -16,6 +16,7 @@ FEATURES = (
     "last_problem_solve_time_minutes",
 )
 FEATURE_CONTRACT = "say-practice-v1"
+MIN_TRAINING_TIMED_SOLVES = 5
 
 
 def utc(value):

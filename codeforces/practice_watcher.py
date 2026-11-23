@@ -234,8 +234,8 @@ def repair_stale_profiles(*, after_account_id=0, batch_size=5):
 def run_worker():
     """Continuously watch practice and also execute the existing sync queue."""
     interval = current_app.config["CODEFORCES_WATCH_INTERVAL_SECONDS"]
-    if not 10 <= interval <= 3600:
-        raise ValueError("CODEFORCES_WATCH_INTERVAL_SECONDS must be between 10 and 3600")
+    if not 5 <= interval <= 3600:
+        raise ValueError("CODEFORCES_WATCH_INTERVAL_SECONDS must be between 5 and 3600")
     if not 1 <= current_app.config["CODEFORCES_WATCH_BATCH_SIZE"] <= 100:
         raise ValueError("CODEFORCES_WATCH_BATCH_SIZE must be between 1 and 100")
     if not 1 <= current_app.config["CODEFORCES_WATCH_PAGE_LIMIT"] <= 100:
@@ -248,6 +248,7 @@ def run_worker():
     last_profile_repair = 0.0
     profile_cursor = 0
     while True:
+        cycle_started = time.monotonic()
         try:
             summary = watch_once(last_polled=last_polled)
             if first_cycle or summary["accounts_due"]:
@@ -296,4 +297,6 @@ def run_worker():
             logger.exception("Automatic Codeforces progress/skills repair failed")
         finally:
             db.session.remove()
-        time.sleep(5)
+        # Aim for the configured interval between cycle starts rather than
+        # adding another five seconds on top of API/DB processing time.
+        time.sleep(max(0.1, interval - (time.monotonic() - cycle_started)))

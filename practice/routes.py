@@ -7,7 +7,10 @@ from database.db import db
 from middleware.auth import login_required
 from models.practice_session import PracticeSession
 from models.problem import Problem
-from recommendations.feature_history import official_solved_in_session
+from recommendations.feature_history import (
+    MIN_TRAINING_TIMED_SOLVES, collect_timed_solve_profile,
+    official_solved_in_session,
+)
 from models.codeforces_submission import CodeforcesSubmission
 from models.recommendation_log import RecommendationLog
 from uuid import UUID
@@ -74,6 +77,34 @@ def list_sessions(user):
     return {"sessions": [session_payload(row, account) for row in rows]}, 200, {
         "Cache-Control": "private, no-store"
     }
+
+
+@practice.get("/readiness")
+@login_required
+def training_readiness(user):
+    """Report the real historical timed-solve evidence available for future practice.
+
+    This is not a claim that the online model was trained or selected for serving.
+    """
+    account = active_codeforces_account(user.uid)
+    history = (
+        collect_timed_solve_profile(user.uid, account, minimum=1)
+        if account is not None else None
+    )
+    count = history["timed_solved_count"] if history else 0
+    return {
+        "verified_timed_solves": count,
+        "required_timed_solves": MIN_TRAINING_TIMED_SOLVES,
+        "remaining_timed_solves": max(0, MIN_TRAINING_TIMED_SOLVES - count),
+        "history_ready_for_future_sessions": count >= MIN_TRAINING_TIMED_SOLVES,
+        "account_sync_status": account.sync_status if account else "NOT_LINKED",
+        "note": (
+            "Training features for a session only use distinct officially verified "
+            "timed solves observed before that session started. "
+            "A training target must also be rated, previously unsolved, "
+            "and have a confirmed official result."
+        ),
+    }, 200, {"Cache-Control": "private, no-store"}
 
 
 @practice.post("")

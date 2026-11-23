@@ -10,7 +10,9 @@ from models.codeforces_account import CodeforcesAccount
 from models.codeforces_submission import CodeforcesSubmission
 from models.practice_session import PracticeSession
 from models.problem import Problem
-from recommendations.feature_history import FEATURE_CONTRACT, collect_timed_solve_profile
+from recommendations.feature_history import (
+    FEATURE_CONTRACT, MIN_TRAINING_TIMED_SOLVES, collect_timed_solve_profile,
+)
 
 training_export = Blueprint(
     "training_export", __name__, url_prefix="/api/internal/project-red"
@@ -147,7 +149,8 @@ def export_events():
         else:
             outcome = "UNKNOWN"
         history = collect_timed_solve_profile(
-            session.uid, account, as_of=session.started_at, minimum=5
+            session.uid, account, as_of=session.started_at,
+            minimum=MIN_TRAINING_TIMED_SOLVES,
         )
         tags = problem.tags_raw if isinstance(problem.tags_raw, list) else []
         events.append({
