@@ -3,12 +3,15 @@
 Use the existing sibling virtual environments; do not mutate databases or secrets.
 """
 import argparse
+import json
 import os
 import shutil
 import signal
 import socket
 import subprocess
 import time
+from urllib.error import URLError
+from urllib.request import urlopen
 from pathlib import Path
 
 from dotenv import dotenv_values
@@ -71,6 +74,25 @@ def check_port(port, name):
             )
 
 
+def wait_for_backend(base_url, *, child=None, timeout=30):
+    """Wait for the SAY health endpoint before starting dependent processes."""
+    deadline = time.monotonic() + timeout
+    health_url = base_url.rstrip("/") + "/"
+    while time.monotonic() < deadline:
+        if child is not None and child.poll() is not None:
+            raise RuntimeError(f"Flask exited with status {child.returncode} before becoming ready")
+        try:
+            with urlopen(health_url, timeout=1) as response:
+                if (response.status == 200
+                        and json.loads(response.read(1024)).get("message") == "SAY backend is running"):
+                    print("Flask API ready; starting dependent services.", flush=True)
+                    return
+        except (OSError, ValueError, TypeError, AttributeError, URLError):
+            pass
+        time.sleep(0.25)
+    raise RuntimeError(f"SAY-backend did not become ready at {health_url}")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--no-frontend", action="store_true", help="Skip starting Next.js")
@@ -112,10 +134,14 @@ def main():
                 child.wait()
 
     try:
+        if args.no_server:
+            wait_for_backend(env["SAY_BACKEND_URL"])
         for name, command, cwd in commands:
             print(f"Starting {name}...", flush=True)
             child = subprocess.Popen(command, cwd=cwd, env=env, start_new_session=True)
             processes.append((name, child))
+            if name == "Flask API":
+                wait_for_backend(env["SAY_BACKEND_URL"], child=child)
         print("SAY local services started. Press Ctrl+C to stop all.", flush=True)
         while True:
             for name, child in processes:
