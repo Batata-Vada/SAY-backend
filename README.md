@@ -14,13 +14,34 @@ pip install -r requirements.txt
 
 On Windows, activate the environment with `.venv\Scripts\activate`.
 
-Create a local `.env` file (do not commit it) with settings appropriate for your environment:
+```bash
+python - <<'PY'
+import sqlite3
+from datetime import datetime
+from pathlib import Path
+src=Path('instance/app.db')
+if not src.is_file(): raise SystemExit('Check flask --app main db-info first')
+dst=src.with_name('app-before-oidc-'+datetime.now().strftime('%Y%m%d-%H%M%S')+'.db')
+with sqlite3.connect(src) as a, sqlite3.connect(dst) as b: a.backup(b)
+print('Backup:',dst)
+PY
+```
+
+**Never delete `app.db`, run `db.create_all()` against production, stamp a missing migration, or auto-merge old SAY users by handle.**
+
+## 2. Create a Codeforces OAuth application
+
+1. Sign in to Codeforces and open https://codeforces.com/settings/api.
+2. Create an OAuth application (Codeforces's OIDC announcement points to API settings).
+3. For local development, register the exact callback URI `http://127.0.0.1:5001/auth/codeforces/callback` **if permitted by Codeforces**. If loopback HTTP callbacks aren't accepted, use an HTTPS development origin and register that exact URI.
+4. Obtain `client_id` and `client_secret` for that OAuth app. Keep the secret on the backend only.
+5. Configure `.env` (never commit):
 
 ```dotenv
 SECRET_KEY=replace-with-a-long-random-secret
 DATABASE_URL=sqlite:///app.db
-CODEFORCES_OIDC_CLIENT_ID=your-client-id
-CODEFORCES_OIDC_CLIENT_SECRET=your-client-secret
+CODEFORCES_OIDC_CLIENT_ID=REPLACE_WITH_OAUTH_APP_ID
+CODEFORCES_OIDC_CLIENT_SECRET=REPLACE_WITH_OAUTH_APP_SECRET
 CODEFORCES_OIDC_REDIRECT_URI=http://127.0.0.1:5001/auth/codeforces/callback
 SAY_FRONTEND_URL=http://127.0.0.1:3000
 CORS_ORIGINS=http://127.0.0.1:3000
@@ -39,6 +60,8 @@ python main.py
 The default local backend address is `http://127.0.0.1:5001`. You can configure `HOST` and `PORT`.
 
 ## Authentication
+
+`http://127.0.0.1:5001/auth/codeforces/login`
 
 Open `/auth/codeforces/login` in a browser to sign in through Codeforces. The callback verifies the OpenID Connect identity and creates a SAY session.
 
