@@ -126,52 +126,133 @@ The `rest_client/codeforces_oidc_forum.http` file contains example API requests.
 
 ## Adaptive recommendations
 
-The Practice page requests `GET /api/recommendations?limit=10&mode=new` and displays
-the returned Codeforces problem metadata and direct problem links. The backend
-preserves solved-problem exclusions, topic scoring, retry selection and recommendation
-logs. The same endpoint supports `retry` and `mixed` modes.
+The frontend uses the unchanged `GET /api/recommendations?limit=10&mode=new` endpoint.
+SAY retains its deterministic ranking, solved-problem exclusions, difficulty fallback,
+audit logs, and authenticated practice-session routes. The response fields
+`recommendation_engine`, `model_version`, `selection_reason`,
+`difficulty_prediction`, and `recommendations` remain available.
 
-The default recommender is used while **both** the distinct solved-problem count is
-at most 10 and the number of rated Codeforces contests is at most 5. Crossing either
-threshold makes the user eligible for Project Red v5, provided their account is verified,
-Codeforces history is successfully synchronized, the user has a current Codeforces
-contest rating, and enough genuine practice timings have been verified against official
-individual Codeforces accepted submissions. Otherwise the default recommender remains
-active. Model inference failures also return to the default recommender.
+Project Red is disabled by default. Enable it only after deploying a validated
+real-outcome model artifact:
 
-The Project Red v5 ONNX model and its external data are under
-`recommendations/artifacts/project_red_v5/`. The compatible scaler values were
-reconstructed from Project Red's v5 training split rather than using its saved scalers,
-which were incorrectly refitted on its test split. The existing model was trained on
-synthetic target data, so the predicted bands should be treated as experimental.
-Use `PROJECT_RED_ENABLED=false` to disable model inference. The number of required
-verified timed solves defaults to five and can be configured with
-`PROJECT_RED_MIN_TIMED_SOLVES`.
+```dotenv
+PROJECT_RED_ENABLED=false
+PROJECT_RED_MIN_TIMED_SOLVES=5
+PROJECT_RED_MODEL_PATH=recommendations/artifacts/project_red_real_v1/model.json
+PROJECT_RED_EXPORT_TOKEN=YOUR_PRIVATE_EXPORT_TOKEN
+PROJECT_RED_PSEUDONYM_KEY=YOUR_SEPARATE_PRIVATE_PSEUDONYM_KEY
+```
 
-After updating the repository, install the new runtime dependencies and migrate
-the database before serving requests:
+Set the two secrets to independently generated random values; do not commit them.
+The export token is used **only by Project Red's private ingestion client**. Do not
+send it from the browser. Keep the HTTPS exporter behind your server firewall or
+gateway outside local development.
+
+### Training export and feature contract
+
+`GET /api/internal/project-red/events?after_id=0&limit=200` requires
+`Authorization: Bearer <PROJECT_RED_EXPORT_TOKEN>` and responds with
+`schema_version: 2`, `feature_contract: say-practice-v1`, `events`, and
+`next_after_id`. Cursor pagination uses monotonically increasing practice-session IDs.
+Rerun a complete export when training because older session outcomes can change after
+Codeforces rejudging or synchronization. Raw events are private behavioral records,
+even though user IDs are pseudonymized.
+
+Each event includes `outcome_status` (`SOLVED`, `FAILED`, `UNKNOWN`),
+`official_solved`, `final_failure_observed`, `previously_solved`,
+`problem_rating`, `duration_seconds`, and `history_features`.
+Only eligible first-time `SOLVED` and `FAILED` events should be used as binary labels.
+`FAILED` requires an observed final unsuccessful individual submission,
+no pending decision, and a successful full-history sync following the practice session.
+A recorded start/finish without an official attempt is **not** a verified failure.
+There may be no eligible examples until users have accumulated sufficient observed
+history and a full synchronization has completed.
+
+`history_features` is calculated server-side using the exact same feature extractor
+as inference, as of the target session's start time. It selects the most recent 150
+completed sessions strictly before that time and up to 30 distinct, officially verified
+timed solves observed before that time. Five such solves are required by default.
+The current model contract uses these ordered inputs:
+
+```text
+candidate_rating
+last_problem_rating
+mean_solve_time_minutes
+time_std_minutes
+timed_solved_count
+last_problem_solve_time_minutes
+```
+
+A null `history_features` means no historically observable inference profile exists.
+Existing imported Codeforces submissions do not have known original first-observation
+times. A later sync will record a **new** observation timestamp rather than invent
+historical provenance; it will not retroactively create older historical features.
+
+### Validated real-model serving
+
+Model training, evaluation, calibration, and artifact publication belong to
+`project_red`, not this Flask application. A compatible `model.json` must contain:
+
+```json
+{
+  "artifact_schema_version": 1,
+  "feature_contract": "say-practice-v1",
+  "model_type": "logistic-regression",
+  "model_version": "project-red-real-v1",
+  "features": [
+    "candidate_rating", "last_problem_rating",
+    "mean_solve_time_minutes", "time_std_minutes",
+    "timed_solved_count", "last_problem_solve_time_minutes"
+  ],
+  "x_mean": [0, 0, 0, 0, 0, 0],
+  "x_scale": [1, 1, 1, 1, 1, 1],
+  "coef": [-0.1, 0, 0, 0, 0, 0],
+  "intercept": 0,
+  "target_probability": 0.60,
+  "acceptable_probability_range": [0.45, 0.75],
+  "rating_grid": [800, 3500, 100]
+}
+```
+
+**The numbers above describe artifact structure only, not a trained model.**
+Never publish or enable a dummy artifact. SAY validates model type, schema,
+feature order, finite coefficients and difficulty monotonicity. It derives an
+appropriate window from the accepted probability range and falls back to the
+existing deterministic recommender if the artifact is absent, invalid, or does
+not produce a suitable difficulty window. Model version is taken from the
+artifact when that model is actually selected. To deploy a replacement model,
+update the artifact at a new versioned path and restart Flask; the artifact loader
+caches models within each process.
+
+The server's `POST /api/me/practice-sessions` still only requires a numeric
+`problem_id`. An optional `recommendation_run_id` can now be supplied to link
+practice to a recommendation previously generated for the same user and problem.
+Existing frontend requests and response keys remain supported.
+
+### Deployment and database upgrade
+
+This release adds nullable Codeforces submission observation timestamps, the last
+successful full-sync timestamp, and optional practice recommendation attribution.
+These require a database migration before restarting the new application:
 
 ```bash
-pip install -r requirements.txt
+flask --app main db current
+flask --app main db heads
+# Back up the SQLite file instance/app.db before upgrading.
 flask --app main db upgrade
+flask --app main verify-db-schema
 ```
 
-Refresh Codeforces submissions through the existing sync worker, which now also
-updates the current rating and rated-contest count. A worker must be running for
-queued sync jobs to finish:
+Do not stamp an older database without reconciling its actual schema. After migration,
+run a **full** Codeforces sync to establish coverage and observation timestamps:
 
 ```bash
-flask --app main process-cf-sync-queue --limit 10
+flask --app main sync-cf-submissions --account-id <ID> --full
 ```
 
-`POST /api/me/practice-sessions` with a canonical numeric `problem_id` starts
-a server-timed session. `POST /api/me/practice-sessions/<id>/finish` completes it.
-`GET /api/me/practice-sessions` lists up to 30 recent sessions. Session timings
-contribute to Project Red only when a Codeforces individual accepted submission
-is found between that session's start and finish, after submission sync. Codeforces
-`time_consumed_ms` is execution time, not human solving time, and is never used
-as a model input. The API uses the existing authenticated session and CSRF checks.
+Inspect `flask --app main sync-cf-submissions --help` for the exact installed
+CLI option names. Existing queued sync workers continue to work.
 
-No additional public export API is needed for live recommendations: SAY performs
-feature extraction and inference within the backend. Model retraining remains a
-separate process and should not push identifiable user history to a public repository.
+Legacy `project_red_v5` files remain in Git history for reproducibility but
+are not loaded by the new serving path. The old model was trained on synthetic
+difficulty-window targets; SAY does not silently fall back to that model.

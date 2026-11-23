@@ -71,6 +71,7 @@ class CodeforcesAccount(db.Model):
     current_rating = db.Column(db.Integer, nullable=True)
     rated_contests = db.Column(db.Integer, nullable=True)
     rating_updated_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    last_full_sync_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
         Index(

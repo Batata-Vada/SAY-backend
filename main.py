@@ -20,6 +20,7 @@ from submissions.routes import submissions
 from codeforces.routes import codeforces
 from codeforces.api_extra import codeforces_api
 from recommendations.api_alias import recommendation_api
+from recommendations.training_export import training_export
 from analytics.routes import analytics
 from recommendations.routes import recommendations
 from practice.routes import practice
@@ -104,6 +105,7 @@ def create_app(test_config=None):
     app.register_blueprint(codeforces)
     app.register_blueprint(codeforces_api)
     app.register_blueprint(recommendation_api)
+    app.register_blueprint(training_export)
     app.register_blueprint(analytics)
     app.register_blueprint(recommendations)
     app.register_blueprint(practice)

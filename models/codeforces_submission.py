@@ -38,6 +38,8 @@ class CodeforcesSubmission(db.Model):
     author_members_raw = db.Column(db.JSON, nullable=False, default=list)
     raw_problem = db.Column(db.JSON, nullable=False, default=dict)
     last_checked_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utc_now)
+    first_observed_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    final_verdict_observed_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
         db.UniqueConstraint(

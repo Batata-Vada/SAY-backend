@@ -150,6 +150,7 @@ def generate_recommendations(uid: int, limit: int = 10, mode: str = "new") -> di
     engine = "default"
     selection_reason = "standard_recommender"
     difficulty_prediction = None
+    selected_version = MODEL_VERSION
     solved_count = sum(bool(row.is_solved) for row in progress_rows)
     contest_count = account.rated_contests if account is not None else None
     if account is None or contest_count is None:
@@ -174,6 +175,7 @@ def generate_recommendations(uid: int, limit: int = 10, mode: str = "new") -> di
                     target = prediction["center"]
                     window = max(200, (prediction["upper_bound"] - prediction["lower_bound"]) // 2)
                     difficulty_prediction = prediction
+                    selected_version = prediction["model_version"]
                     engine = "project_red"
                     selection_reason = "model_prediction"
                 else:
@@ -205,7 +207,6 @@ def generate_recommendations(uid: int, limit: int = 10, mode: str = "new") -> di
         result.append(clean)
 
     run_id = str(uuid4())
-    selected_version = "project-red-v5" if engine == "project_red" else MODEL_VERSION
     try:
         for item in result:
             db.session.add(RecommendationLog(

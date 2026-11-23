@@ -7,7 +7,9 @@ from database.db import db
 from middleware.auth import login_required
 from models.practice_session import PracticeSession
 from models.problem import Problem
-from recommendations.project_red import official_solved_in_session
+from recommendations.feature_history import official_solved_in_session
+from models.recommendation_log import RecommendationLog
+from uuid import UUID
 
 practice = Blueprint("practice", __name__, url_prefix="/api/me/practice-sessions")
 
@@ -64,9 +66,29 @@ def start_session(user):
                     "session": running.to_dict()}, 409
         running.status = "ABANDONED"
         running.finished_at = datetime.now(timezone.utc)
+    run_id = data.get("recommendation_run_id")
+    if run_id is not None:
+        if not isinstance(run_id, str) or len(run_id) != 36:
+            return {"message": "Invalid recommendation_run_id"}, 400
+        try:
+            parsed = UUID(run_id)
+        except (ValueError, AttributeError):
+            return {"message": "Invalid recommendation_run_id"}, 400
+        if str(parsed) != run_id:
+            return {"message": "Invalid recommendation_run_id"}, 400
+        matching = db.session.execute(
+            db.select(RecommendationLog.id).where(
+                RecommendationLog.run_id == run_id,
+                RecommendationLog.uid == user.uid,
+                RecommendationLog.problem_id == problem.id,
+            ).limit(1)
+        ).first()
+        if matching is None:
+            return {"message": "Recommendation not found for this problem"}, 409
     row = PracticeSession(uid=user.uid, source_account_id=account.id,
                           problem_id=problem.id, status="ACTIVE",
-                          started_at=datetime.now(timezone.utc))
+                          started_at=datetime.now(timezone.utc),
+                          recommendation_run_id=run_id)
     db.session.add(row)
     db.session.commit()
     return {"session": row.to_dict()}, 201, {"Cache-Control": "no-store"}

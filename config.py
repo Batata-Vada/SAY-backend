@@ -56,5 +56,12 @@ class Config:
     }
     RECOMMENDATION_DEFAULT_RATING = int(os.getenv("REC_DEFAULT_RATING", "1000"))
     RECOMMENDATION_CANDIDATE_POOL_CAP = int(os.getenv("REC_CANDIDATE_POOL_CAP", "1200"))
-    PROJECT_RED_ENABLED = env_bool("PROJECT_RED_ENABLED", True)
+    PROJECT_RED_ENABLED = env_bool("PROJECT_RED_ENABLED", False)
     PROJECT_RED_MIN_TIMED_SOLVES = int(os.getenv("PROJECT_RED_MIN_TIMED_SOLVES", "5"))
+
+    PROJECT_RED_EXPORT_TOKEN = os.getenv("PROJECT_RED_EXPORT_TOKEN", "")
+    PROJECT_RED_PSEUDONYM_KEY = os.getenv("PROJECT_RED_PSEUDONYM_KEY", "")
+    PROJECT_RED_MODEL_PATH = os.getenv(
+        "PROJECT_RED_MODEL_PATH",
+        "recommendations/artifacts/project_red_real_v1/model.json",
+    )

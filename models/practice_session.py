@@ -16,9 +16,11 @@ class PracticeSession(db.Model):
                            default=lambda: datetime.now(timezone.utc))
     finished_at = db.Column(db.DateTime(timezone=True), nullable=True)
     duration_seconds = db.Column(db.Integer, nullable=True)
+    recommendation_run_id = db.Column(db.String(36), nullable=True)
 
     __table_args__ = (
         db.Index("ix_practice_user_status", "uid", "status"),
+        db.Index("ix_practice_recommendation_run", "recommendation_run_id"),
         db.CheckConstraint("duration_seconds IS NULL OR duration_seconds > 0",
                            name="ck_practice_duration_positive"),
     )
@@ -32,4 +34,5 @@ class PracticeSession(db.Model):
             "finished_at": self.finished_at.isoformat() if self.finished_at else None,
             "duration_seconds": self.duration_seconds,
             "official_solve_verified": bool(verified),
+            "recommendation_run_id": self.recommendation_run_id,
         }

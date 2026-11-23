@@ -84,6 +84,7 @@ def _apply_page(account_id, handle, raw_page, lookup, seen_ids, stats, *, force_
                 codeforces_account_id=account_id,
                 cf_submission_id=sid,
             )
+            stored.first_observed_at = now
             db.session.add(stored)
             stats["inserted"] += 1
         else:
@@ -97,8 +98,19 @@ def _apply_page(account_id, handle, raw_page, lookup, seen_ids, stats, *, force_
             else:
                 stats["unchanged"] += 1
 
+        if stored.first_observed_at is None:
+            stored.first_observed_at = now
         for key, value in incoming.items():
             setattr(stored, key, value)
+        if (
+            stored.final_verdict_observed_at is None
+            and incoming["verdict"] not in (None, "TESTING", "SKIPPED")
+            and (
+                incoming["verdict"] != "OK"
+                or incoming["testset"] == "TESTS"
+            )
+        ):
+            stored.final_verdict_observed_at = now
 
     db.session.commit()
     stats["unique_seen"] += newly_seen
@@ -233,6 +245,8 @@ def sync_codeforces_submissions(
             account.sync_status = "SUCCEEDED"
             account.last_sync_error = None
             account.last_synced_at = datetime.now(timezone.utc)
+            if cutoff is None:
+                account.last_full_sync_at = account.last_synced_at
             current_rating = info.get("rating")
             account.current_rating = current_rating if type(current_rating) is int and 0 <= current_rating <= 5000 else None
             account.rating_updated_at = account.last_synced_at
