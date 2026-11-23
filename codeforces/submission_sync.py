@@ -309,6 +309,7 @@ def sync_active_practice_submissions(
         stats = {
             "inserted": 0, "updated": 0, "unchanged": 0,
             "previously_known": 0, "unique_seen": 0, "pages_completed": 0,
+            "reconciled_problem_links": 0,
         }
         start_index = 1
         covered = False
@@ -329,7 +330,7 @@ def sync_active_practice_submissions(
             raise SubmissionSyncError(
                 "Recent submissions exceeded the page limit; increase CODEFORCES_WATCH_PAGE_LIMIT"
             )
-        reconcile_unresolved_submissions(account.id)
+        stats["reconciled_problem_links"] = reconcile_unresolved_submissions(account.id)
         account = db.session.get(CodeforcesAccount, account_id)
         account.sync_status = "SUCCEEDED"
         account.last_sync_error = None

@@ -292,3 +292,20 @@ Practice shorter than 60 seconds and sessions exceeding four hours do not
 qualify as timed training events. Recent polling does not assert complete
 submission-history coverage; the standard full sync is still needed to
 establish reliable failed-outcome labels for Project Red.
+
+### Diagnosing practice synchronization
+
+With the persistent watcher stopped, run a single real Codeforces poll:
+
+```bash
+flask --app main watch-cf-practice --once
+```
+
+The summary reports eligible accounts, due accounts, successful/failed account
+checks, and completed sessions. The continuous watcher also prints a startup
+summary and per-poll status. If `eligible_accounts` is zero, check whether
+the linked account is verified and whether there is an active session or one
+finished within the last 15 minutes. Finished sessions remain finished:
+delayed Codeforces acceptance can update their official verification status
+without changing the user's recorded finish time. The watcher does not modify
+the five-prior-timed-solves rule for Project Red training.

@@ -1,6 +1,9 @@
 """Run Codeforces practice synchronization separately from the Flask web server."""
+import json
 import logging
 import time
+
+import click
 from datetime import datetime, timedelta, timezone
 
 from flask import current_app
@@ -74,11 +77,21 @@ def watch_once(*, last_polled=None):
     interval = current_app.config["CODEFORCES_WATCH_INTERVAL_SECONDS"]
     limit = current_app.config["CODEFORCES_WATCH_BATCH_SIZE"]
     max_pages = current_app.config["CODEFORCES_WATCH_PAGE_LIMIT"]
+    # A manually finished session can still receive a delayed final verdict.
+    # Watch recent finished sessions as well, without reopening their timers.
+    recent = datetime.now(timezone.utc) - timedelta(minutes=15)
     rows = db.session.execute(
         db.select(CodeforcesAccount.id, CodeforcesAccount.uid, func.min(PracticeSession.started_at))
         .join(PracticeSession, PracticeSession.source_account_id == CodeforcesAccount.id)
         .where(
-            PracticeSession.status == "ACTIVE",
+            db.or_(
+                PracticeSession.status == "ACTIVE",
+                db.and_(
+                    PracticeSession.status == "FINISHED",
+                    PracticeSession.finished_at.is_not(None),
+                    PracticeSession.finished_at >= recent,
+                ),
+            ),
             CodeforcesAccount.ownership_verified.is_(True),
             CodeforcesAccount.unlinked_at.is_(None),
         )
@@ -92,6 +105,7 @@ def watch_once(*, last_polled=None):
     due.sort(key=lambda row: last_polled.get(row[0], float("-inf")))
     checked = 0
     completed = 0
+    failed = 0
     for account_id, uid, first_started_at in due[:limit]:
         last_polled[account_id] = time.monotonic()
         try:
@@ -100,7 +114,10 @@ def watch_once(*, last_polled=None):
             )
             result = complete_verified_sessions(account_id)
             completed += result["completed"]
-            if stats["inserted"] or stats["updated"]:
+            if (
+                stats["inserted"] or stats["updated"]
+                or stats["reconciled_problem_links"] or result["completed"]
+            ):
                 rebuild_user_progress(uid)
                 rebuild_user_skills(uid)
             checked += 1
@@ -109,6 +126,7 @@ def watch_once(*, last_polled=None):
                 account_id, stats["inserted"], stats["updated"], result["completed"],
             )
         except Exception:
+            failed += 1
             db.session.rollback()
             logger.exception("Automatic practice sync failed for account %s", account_id)
         finally:
@@ -116,7 +134,13 @@ def watch_once(*, last_polled=None):
     active_ids = {row[0] for row in rows}
     for account_id in set(last_polled) - active_ids:
         del last_polled[account_id]
-    return {"accounts_checked": checked, "sessions_completed": completed}
+    return {
+        "eligible_accounts": len(rows),
+        "accounts_due": len(due),
+        "accounts_checked": checked,
+        "accounts_failed": failed,
+        "sessions_completed": completed,
+    }
 
 
 def run_worker():
@@ -128,11 +152,15 @@ def run_worker():
         raise ValueError("CODEFORCES_WATCH_BATCH_SIZE must be between 1 and 100")
     if not 1 <= current_app.config["CODEFORCES_WATCH_PAGE_LIMIT"] <= 100:
         raise ValueError("CODEFORCES_WATCH_PAGE_LIMIT must be between 1 and 100")
-    logger.info("Codeforces practice watcher started (poll every %ss)", interval)
+    click.echo(f"Codeforces practice watcher started; interval={interval}s")
     last_polled = {}
+    first_cycle = True
     while True:
         try:
-            watch_once(last_polled=last_polled)
+            summary = watch_once(last_polled=last_polled)
+            if first_cycle or summary["accounts_due"]:
+                click.echo("Practice watcher: " + json.dumps(summary, sort_keys=True))
+            first_cycle = False
         except Exception:
             logger.exception("Practice watcher cycle failed")
         finally:
