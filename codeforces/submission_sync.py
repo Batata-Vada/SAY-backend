@@ -41,7 +41,7 @@ def _as_utc(value):
     return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
 
 
-def _apply_page(account_id, handle, raw_page, lookup, seen_ids, stats, *, force_refresh=False):
+def _apply_page(account_id, handle, raw_page, lookup, seen_ids, stats, *, force_refresh=False, refresh_unchanged_check_time=True):
     """Normalize whole page first; then upsert using one batch lookup and commit."""
     if not isinstance(raw_page, list):
         raise SubmissionSyncError("Invalid paginated submissions payload")
@@ -79,6 +79,7 @@ def _apply_page(account_id, handle, raw_page, lookup, seen_ids, stats, *, force_
     for incoming in parsed:
         sid = incoming["cf_submission_id"]
         stored = existing.get(sid)
+        changed = stored is None
         if stored is None:
             stored = CodeforcesSubmission(
                 codeforces_account_id=account_id,
@@ -95,12 +96,15 @@ def _apply_page(account_id, handle, raw_page, lookup, seen_ids, stats, *, force_
                 for f in _FIELDS
             ):
                 stats["updated"] += 1
+                changed = True
             else:
                 stats["unchanged"] += 1
 
         if stored.first_observed_at is None:
             stored.first_observed_at = now
         for key, value in incoming.items():
+            if key == "last_checked_at" and not changed and not refresh_unchanged_check_time:
+                continue
             setattr(stored, key, value)
         if (
             stored.final_verdict_observed_at is None
@@ -310,7 +314,10 @@ def sync_active_practice_submissions(
         covered = False
         for _ in range(max_pages):
             page = client.user_status(account.handle, from_index=start_index, count=page_size)
-            parsed = _apply_page(account.id, account.handle, page, lookup, seen_ids, stats)
+            parsed = _apply_page(
+                account.id, account.handle, page, lookup, seen_ids, stats,
+                refresh_unchanged_check_time=False,
+            )
             if len(page) < page_size:
                 covered = True
                 break
