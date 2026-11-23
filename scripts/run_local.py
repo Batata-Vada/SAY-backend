@@ -6,8 +6,8 @@ import argparse
 import os
 import shutil
 import signal
+import socket
 import subprocess
-import sys
 import time
 from pathlib import Path
 
@@ -28,6 +28,11 @@ def executable(path):
 def resolve():
     backend_python = executable(ROOT / ".venv/bin/python")
     project_python = executable(PROJECT_RED / ".venv/bin/python")
+    if not (PROJECT_RED / "pipeline/auto_update.py").is_file():
+        raise RuntimeError(
+            "Project Red automation is missing. Update the sibling project_red repository "
+            "with git pull --ff-only origin main before starting SAY."
+        )
     if not (FRONTEND / "package.json").is_file():
         raise RuntimeError(f"Missing frontend repository: {FRONTEND}")
     if not (FRONTEND / "node_modules").is_dir():
@@ -55,12 +60,27 @@ def resolve():
     return backend_python, project_python, npm, env
 
 
+def check_port(port, name):
+    """Fail before starting any services if a local development port is occupied."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as connection:
+        connection.settimeout(1)
+        if connection.connect_ex(("127.0.0.1", port)) == 0:
+            raise RuntimeError(
+                f"{name} cannot start: port {port} is already in use. "
+                "Stop the existing service before running the all-in-one launcher."
+            )
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--no-frontend", action="store_true", help="Skip starting Next.js")
     parser.add_argument("--no-server", action="store_true", help="Skip starting Flask")
     args = parser.parse_args()
     backend_python, project_python, npm, env = resolve()
+    if not args.no_server:
+        check_port(5001, "Flask")
+    if not args.no_frontend:
+        check_port(3000, "Next.js")
 
     processes = []
     commands = [
@@ -73,15 +93,22 @@ def main():
         commands.append(("Next.js", [npm, "run", "dev", "--", "--hostname", "127.0.0.1", "--port", "3000"], FRONTEND))
 
     def stop_all():
+        # Each process was started in its own session; terminate the full group,
+        # including the Next.js child spawned by npm, not just the npm parent.
         for name, child in processes:
-            if child.poll() is None:
-                print(f"Stopping {name}", flush=True)
-                child.terminate()
+            print(f"Stopping {name}", flush=True)
+            try:
+                os.killpg(child.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
         for _, child in processes:
             try:
                 child.wait(timeout=8)
             except subprocess.TimeoutExpired:
-                child.kill()
+                try:
+                    os.killpg(child.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
                 child.wait()
 
     try:
