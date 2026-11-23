@@ -12,7 +12,8 @@ from sqlalchemy import func
 from analytics.mastery import rebuild_user_skills
 from analytics.progress import rebuild_user_progress
 from codeforces.submission_sync import sync_active_practice_submissions
-from codeforces.sync_queue import process_one_sync_request
+from codeforces.sync_queue import process_one_sync_request, enqueue_sync, SyncAlreadyQueued
+from problem_stats.sync import sync_codeforces_problems
 from database.db import db
 from models.codeforces_account import CodeforcesAccount
 from models.codeforces_submission import CodeforcesSubmission
@@ -143,6 +144,37 @@ def watch_once(*, last_polled=None):
     }
 
 
+def schedule_full_history_refresh(*, now=None):
+    """Queue due full-history syncs for verified active links once per configured interval."""
+    now = now or datetime.now(timezone.utc)
+    interval = current_app.config["CODEFORCES_FULL_SYNC_INTERVAL_HOURS"]
+    if not 1 <= interval <= 720:
+        raise ValueError("CODEFORCES_FULL_SYNC_INTERVAL_HOURS must be between 1 and 720")
+    cutoff = now - timedelta(hours=interval)
+    account = db.session.execute(
+        db.select(CodeforcesAccount)
+        .where(
+            CodeforcesAccount.ownership_verified.is_(True),
+            CodeforcesAccount.unlinked_at.is_(None),
+            db.or_(
+                CodeforcesAccount.last_full_sync_at.is_(None),
+                CodeforcesAccount.last_full_sync_at <= cutoff,
+            ),
+            CodeforcesAccount.sync_status != "RUNNING",
+        )
+        .order_by(CodeforcesAccount.last_full_sync_at.asc(), CodeforcesAccount.id.asc())
+        .limit(1)
+    ).scalar_one_or_none()
+    if account is None:
+        return False
+    try:
+        enqueue_sync(account.uid, account, full=True)
+        click.echo(f"Queued periodic full Codeforces refresh for account {account.id}")
+        return True
+    except SyncAlreadyQueued:
+        return False
+
+
 def run_worker():
     """Continuously watch practice and also execute the existing sync queue."""
     interval = current_app.config["CODEFORCES_WATCH_INTERVAL_SECONDS"]
@@ -155,6 +187,8 @@ def run_worker():
     click.echo(f"Codeforces practice watcher started; interval={interval}s")
     last_polled = {}
     first_cycle = True
+    last_full_schedule = 0.0
+    last_catalog_sync = 0.0
     while True:
         try:
             summary = watch_once(last_polled=last_polled)
@@ -166,11 +200,29 @@ def run_worker():
         finally:
             db.session.remove()
         try:
+            now = time.monotonic()
+            if now - last_full_schedule >= 3600:
+                last_full_schedule = now
+                schedule_full_history_refresh()
             result = process_one_sync_request()
             if result is not None:
-                logger.info("Queued Codeforces sync: %s", result)
+                click.echo("Codeforces sync: " + json.dumps(result, sort_keys=True))
         except Exception:
             logger.exception("Queued Codeforces sync worker failed")
+        finally:
+            db.session.remove()
+        try:
+            now = time.monotonic()
+            if current_app.config["CODEFORCES_AUTO_CATALOG_SYNC"] and (
+                last_catalog_sync == 0.0
+                or now - last_catalog_sync >= current_app.config["CODEFORCES_CATALOG_INTERVAL_HOURS"] * 3600
+            ):
+                last_catalog_sync = now
+                result = sync_codeforces_problems()
+                click.echo("Codeforces catalog: " + json.dumps(result, sort_keys=True))
+        except Exception:
+            db.session.rollback()
+            logger.exception("Scheduled Codeforces problem catalog refresh failed")
         finally:
             db.session.remove()
         time.sleep(5)

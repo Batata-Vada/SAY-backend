@@ -21,7 +21,8 @@ def _finite(value):
 
 
 @lru_cache(maxsize=4)
-def _load_artifact(path):
+def _load_artifact(path, signature):
+    # The signature is part of the cache key so atomic model replacements are picked up.
     with Path(path).open(encoding="utf-8") as source:
         artifact = json.load(source)
     if not isinstance(artifact, dict):
@@ -70,7 +71,9 @@ def _artifact():
     path = Path(current_app.config["PROJECT_RED_MODEL_PATH"])
     if not path.is_absolute():
         path = Path(__file__).resolve().parents[1] / path
-    return _load_artifact(str(path.resolve()))
+    path = path.resolve()
+    signature = (path.stat().st_mtime_ns, path.stat().st_size)
+    return _load_artifact(str(path), signature)
 
 
 def solve_probability(profile, candidate_rating, artifact):

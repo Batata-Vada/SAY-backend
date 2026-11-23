@@ -309,3 +309,47 @@ finished within the last 15 minutes. Finished sessions remain finished:
 delayed Codeforces acceptance can update their official verification status
 without changing the user's recorded finish time. The watcher does not modify
 the five-prior-timed-solves rule for Project Red training.
+
+## One-command local development
+
+With the three sibling repositories in the same parent directory, use:
+
+```bash
+cd SAY-backend
+.venv/bin/python scripts/run_local.py
+```
+
+The launcher starts Flask on port 5001, Next.js on port 3000, the Codeforces
+practice watcher, and the Project Red pipeline. It uses the existing
+`.venv` environments in SAY-backend and project_red, plus `npm ci`-installed
+frontend modules. Ensure the ports are free and the database is migrated
+before launching. Press Ctrl+C to shut down the processes.
+
+It reads the existing local `SAY-backend/.env` configuration; no user secrets
+are added to Git. In particular, it maps `PROJECT_RED_EXPORT_TOKEN` to
+Project Red's private `SAY_PROJECT_RED_EXPORT_TOKEN` environment variable,
+and sets the default model location to the sibling online artifact.
+Environment variables already explicitly set by the operator take precedence.
+
+The watcher handles active practice polling, queued Codeforces account syncs,
+a full-history refresh for one due account per hour (default 24-hour
+per-account cadence), and a 24-hour problem-catalog refresh. The Project Red
+worker completely re-exports events, rebuilds `training_rows.csv`, and
+updates the online learner every 180 seconds. Missing historical features do
+not become fabricated training rows. Failures are logged and retried in the
+next cycle. All live services must remain running for automation.
+
+Optional backend settings:
+
+```dotenv
+CODEFORCES_FULL_SYNC_INTERVAL_HOURS=24
+CODEFORCES_AUTO_CATALOG_SYNC=true
+CODEFORCES_CATALOG_INTERVAL_HOURS=24
+PROJECT_RED_PIPELINE_INTERVAL_SECONDS=180
+```
+
+The backend now reloads model JSON when the artifact changes on disk rather
+than keeping the first loaded artifact indefinitely in memory. Project Red
+inference still requires `PROJECT_RED_ENABLED=true` explicitly, and
+should only be enabled after the online artifact has been evaluated on
+real held-out data. The default remains `false` for safety.
