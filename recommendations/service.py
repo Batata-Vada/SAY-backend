@@ -22,6 +22,7 @@ from recommendations.candidate_generator import (
     build_history, eligible_candidates, select_rating_window,
 )
 from recommendations.scoring import MODEL_VERSION, normalized_weights, rank_candidates
+from recommendations.project_red import collect_features, predict
 
 
 class RecommendationError(RuntimeError):
@@ -146,6 +147,40 @@ def generate_recommendations(uid: int, limit: int = 10, mode: str = "new") -> di
     rated, unrated = eligible_candidates(problems, by_id, by_external, mode=mode)
     required = min(cap, max(limit * 6, 30))
     rating_pool, window = select_rating_window(rated, target=target, required=required, profile=profile)
+    engine = "default"
+    selection_reason = "standard_recommender"
+    difficulty_prediction = None
+    solved_count = sum(bool(row.is_solved) for row in progress_rows)
+    contest_count = account.rated_contests if account is not None else None
+    if account is None or contest_count is None:
+        selection_reason = "account_history_unavailable"
+    elif solved_count <= 10 and contest_count <= 5:
+        selection_reason = "new_user"
+    elif not current_app.config.get("PROJECT_RED_ENABLED", True):
+        selection_reason = "project_red_disabled"
+    else:
+        minimum = current_app.config.get("PROJECT_RED_MIN_TIMED_SOLVES", 5)
+        features = collect_features(uid, account, progress_rows, minimum=minimum)
+        if features is None:
+            selection_reason = "timed_official_solves_required"
+        else:
+            try:
+                prediction = predict(features)
+                ml_pool = [candidate for candidate in rated
+                           if prediction["lower_bound"] <= candidate["rating"] <= prediction["upper_bound"]]
+                if len(ml_pool) >= min(limit, 5):
+                    ml_pool.sort(key=lambda c: (abs(c["rating"] - prediction["center"]), c["external_id"]))
+                    rating_pool = ml_pool
+                    target = prediction["center"]
+                    window = max(200, (prediction["upper_bound"] - prediction["lower_bound"]) // 2)
+                    difficulty_prediction = prediction
+                    engine = "project_red"
+                    selection_reason = "model_prediction"
+                else:
+                    selection_reason = "insufficient_model_candidates"
+            except Exception:
+                current_app.logger.exception("Project Red inference unavailable for user %s", uid)
+                selection_reason = "model_unavailable"
     rating_pool = rating_pool[:cap]
     now = datetime.now(timezone.utc)
     ranked = rank_candidates(rating_pool, target=target, window=window, mastery=mastery,
@@ -170,13 +205,14 @@ def generate_recommendations(uid: int, limit: int = 10, mode: str = "new") -> di
         result.append(clean)
 
     run_id = str(uuid4())
+    selected_version = "project-red-v5" if engine == "project_red" else MODEL_VERSION
     try:
         for item in result:
             db.session.add(RecommendationLog(
                 run_id=run_id, uid=uid, source_account_id=account_id,
                 problem_id=item["problem_id"], rank=item["rank"],
                 request_mode=mode, candidate_type=item["candidate_type"],
-                profile_strategy=profile, model_version=MODEL_VERSION,
+                profile_strategy=profile, model_version=selected_version,
                 target_rating=target, ranking_strategy=item["ranking_strategy"],
                 score=item["score"], score_components=item["score_components"],
                 scoring_weights=weights, explanation=item["explanation"], created_at=now,
@@ -188,7 +224,10 @@ def generate_recommendations(uid: int, limit: int = 10, mode: str = "new") -> di
     if not result:
         notes.append("No eligible candidates in the configured safe difficulty windows or unrated fallback.")
     return {
-        "run_id": run_id, "model_version": MODEL_VERSION, "uid": uid,
+        "run_id": run_id, "model_version": selected_version, "uid": uid,
+        "recommendation_engine": engine, "selection_reason": selection_reason,
+        "experience": {"solved_problems": solved_count, "rated_contests": contest_count},
+        "difficulty_prediction": difficulty_prediction,
         "codeforces_account_id": account_id,
         "linked_handle": account.handle if account else None,
         "history_sync_status": account.sync_status if account else "NOT_LINKED",
