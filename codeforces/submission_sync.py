@@ -191,6 +191,12 @@ def sync_codeforces_submissions(
                     and registration != account.registration_time_seconds):
                 raise SubmissionSyncError("Codeforces account identity changed; review link")
 
+            try:
+                rating_history = client.user_rating(handle)
+            except CodeforcesUnavailable:
+                logger.warning("Codeforces rating history unavailable for account %s", account_id)
+                rating_history = None
+
             lookup = codeforces_problem_lookup()
             seen_ids = set()
             start = 1
@@ -227,6 +233,11 @@ def sync_codeforces_submissions(
             account.sync_status = "SUCCEEDED"
             account.last_sync_error = None
             account.last_synced_at = datetime.now(timezone.utc)
+            current_rating = info.get("rating")
+            account.current_rating = current_rating if type(current_rating) is int and 0 <= current_rating <= 5000 else None
+            account.rating_updated_at = account.last_synced_at
+            if isinstance(rating_history, list):
+                account.rated_contests = len(rating_history)
             db.session.commit()
             stats["last_synced_at"] = account.last_synced_at.isoformat()
             return stats

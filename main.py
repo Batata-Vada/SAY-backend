@@ -22,22 +22,23 @@ from codeforces.api_extra import codeforces_api
 from recommendations.api_alias import recommendation_api
 from analytics.routes import analytics
 from recommendations.routes import recommendations
+from practice.routes import practice
 from user_profile.routes import profile
 from user_education.routes import education
 from forum.routes import forum
 from say_profile.routes import say_profile
 
-# Alembic must see all ORM tables before migration autogeneration.
 from models.users import User
 from models.session import Session
 from models.problem import Problem
-from models.submission import Submission  # Local code files: unchanged.
+from models.submission import Submission
 from models.codeforces_account import CodeforcesAccount
 from models.codeforces_submission import CodeforcesSubmission
 from models.user_problem_progress import UserProblemProgress
 from models.codeforces_sync_request import CodeforcesSyncRequest
 from models.user_topic_mastery import UserTopicMastery, UserDifficultyReadiness
 from models.recommendation_log import RecommendationLog
+from models.practice_session import PracticeSession
 from models.user_profile import UserProfile
 from models.user_education import UserEducation
 from models.codeforces_oidc_identity import CodeforcesOidcIdentity, OidcLoginState
@@ -96,7 +97,6 @@ def create_app(test_config=None):
     )
     db.init_app(app)
     migrate.init_app(app, db)
-    # Never call db.create_all() at application startup: Alembic owns the schema.
     app.register_blueprint(auth)
     app.register_blueprint(users)
     app.register_blueprint(submissions)
@@ -105,6 +105,7 @@ def create_app(test_config=None):
     app.register_blueprint(recommendation_api)
     app.register_blueprint(analytics)
     app.register_blueprint(recommendations)
+    app.register_blueprint(practice)
     app.register_blueprint(profile, url_prefix="/profile")
     app.register_blueprint(education, url_prefix="/education")
     app.register_blueprint(cf_oidc)
