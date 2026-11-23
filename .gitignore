@@ -1,26 +1,32 @@
-# Python
 __pycache__/
 *.py[cod]
-
-# Virtual environment
 .venv/
 venv/
 .vscode/
-tests/
-
-# Flask / SQLite runtime data
-instance/
-*.db
-
-# Environment variables
-.env
-
-# Keep test sources tracked. Ignore generated test output.
 .pytest_cache/
 .coverage
 htmlcov/
+*.log
 
-# Private REST Client files
+.env
+.env.*
+!.env.example
+instance/
+*.db
+
+/tests/
+/patches/
+/README_APPLY.md
+/README_TESTS.md
+/pytest.ini
+test_*.py
+*_test.py
+*.patch
+*.diff
+*.orig
+*.rej
+*.bak
+
 /requests.http
 rest_client/*.local.http
 rest_client/*.private.http
