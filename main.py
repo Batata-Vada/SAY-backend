@@ -27,6 +27,7 @@ from user_profile.routes import profile
 from user_education.routes import education
 from forum.routes import forum
 from say_profile.routes import say_profile
+from discussions.routes import discussion
 
 from models.users import User
 from models.session import Session
@@ -43,6 +44,7 @@ from models.user_profile import UserProfile
 from models.user_education import UserEducation
 from models.codeforces_oidc_identity import CodeforcesOidcIdentity, OidcLoginState
 from models.forum import ForumThread, ForumReply, ForumVote
+from models.discussion import DiscussionPost, DiscussionReply
 
 from problem_stats.sync import sync_codeforces_problems
 from codeforces.sync_queue import process_one_sync_request
@@ -51,7 +53,6 @@ from codeforces.reconciliation import reconcile_unresolved_submissions
 from analytics.progress import rebuild_user_progress, ProgressBuildError
 from analytics.mastery import rebuild_user_skills, SkillEstimateError
 from scripts.legacy_merge import merge_empty_verified_identity_into_legacy
-
 
 class OidcCallbackQueryRedactionFilter(logging.Filter):
     """Keep browser access logs from recording OIDC state and authorization codes."""
@@ -111,6 +112,7 @@ def create_app(test_config=None):
     app.register_blueprint(cf_oidc)
     app.register_blueprint(forum)
     app.register_blueprint(say_profile)
+    app.register_blueprint(discussion)
     
 
 
