@@ -9,8 +9,8 @@ from datetime import datetime, timedelta, timezone
 from flask import current_app
 from sqlalchemy import func
 
-from analytics.mastery import rebuild_user_skills
-from analytics.progress import rebuild_user_progress
+from analytics.mastery import SkillEstimateError, read_user_skills, rebuild_user_skills
+from analytics.progress import read_user_progress, rebuild_user_progress
 from codeforces.submission_sync import sync_active_practice_submissions
 from codeforces.sync_queue import process_one_sync_request, enqueue_sync, SyncAlreadyQueued
 from problem_stats.sync import sync_codeforces_problems
@@ -175,6 +175,62 @@ def schedule_full_history_refresh(*, now=None):
         return False
 
 
+def repair_stale_profiles(*, after_account_id=0, batch_size=5):
+    """Repair progress and skills after interrupted syncs or catalog changes.
+
+    Only successfully synchronized, currently linked accounts are eligible.
+    Cycling account IDs avoids starving users behind an unhealthy account.
+    """
+    if type(after_account_id) is not int or after_account_id < 0:
+        raise ValueError("Invalid repair cursor")
+    if type(batch_size) is not int or not 1 <= batch_size <= 20:
+        raise ValueError("Invalid repair batch size")
+
+    def batch(cursor):
+        return db.session.execute(
+            db.select(CodeforcesAccount.id, CodeforcesAccount.uid)
+            .where(
+                CodeforcesAccount.id > cursor,
+                CodeforcesAccount.unlinked_at.is_(None),
+                CodeforcesAccount.ownership_verified.is_(True),
+                CodeforcesAccount.sync_status == "SUCCEEDED",
+                CodeforcesAccount.last_synced_at.is_not(None),
+            )
+            .order_by(CodeforcesAccount.id.asc())
+            .limit(batch_size)
+        ).all()
+
+    accounts = batch(after_account_id)
+    if not accounts and after_account_id:
+        accounts = batch(0)
+    result = {
+        "accounts_checked": 0,
+        "profiles_repaired": 0,
+        "accounts_failed": 0,
+        "next_account_id": accounts[-1][0] if accounts else 0,
+    }
+    for account_id, uid in accounts:
+        try:
+            progress = read_user_progress(uid, limit=1, offset=0)
+            updated = bool(progress["needs_rebuild"])
+            if updated:
+                rebuild_user_progress(uid)
+            try:
+                read_user_skills(uid, limit=1, offset=0)
+            except SkillEstimateError:
+                rebuild_user_skills(uid)
+                updated = True
+            result["profiles_repaired"] += int(updated)
+            result["accounts_checked"] += 1
+        except Exception:
+            result["accounts_failed"] += 1
+            db.session.rollback()
+            logger.exception("Failed to repair Codeforces profile for account %s", account_id)
+        finally:
+            db.session.remove()
+    return result
+
+
 def run_worker():
     """Continuously watch practice and also execute the existing sync queue."""
     interval = current_app.config["CODEFORCES_WATCH_INTERVAL_SECONDS"]
@@ -189,6 +245,8 @@ def run_worker():
     first_cycle = True
     last_full_schedule = 0.0
     last_catalog_sync = 0.0
+    last_profile_repair = 0.0
+    profile_cursor = 0
     while True:
         try:
             summary = watch_once(last_polled=last_polled)
@@ -223,6 +281,19 @@ def run_worker():
         except Exception:
             db.session.rollback()
             logger.exception("Scheduled Codeforces problem catalog refresh failed")
+        finally:
+            db.session.remove()
+        try:
+            now = time.monotonic()
+            if now - last_profile_repair >= 60:
+                last_profile_repair = now
+                repaired = repair_stale_profiles(after_account_id=profile_cursor)
+                profile_cursor = repaired["next_account_id"]
+                if repaired["profiles_repaired"] or repaired["accounts_failed"]:
+                    click.echo("Codeforces profile repair: " + json.dumps(repaired, sort_keys=True))
+        except Exception:
+            db.session.rollback()
+            logger.exception("Automatic Codeforces progress/skills repair failed")
         finally:
             db.session.remove()
         time.sleep(5)

@@ -353,3 +353,21 @@ than keeping the first loaded artifact indefinitely in memory. Project Red
 inference still requires `PROJECT_RED_ENABLED=true` explicitly, and
 should only be enabled after the online artifact has been evaluated on
 real held-out data. The default remains `false` for safety.
+
+### Automatic progress and skill freshness
+
+An unchanged Codeforces account synchronization is not a change in skill
+evidence. The mastery endpoint validates the materialized progress watermark
+and a digest of the official problem evidence, not merely the account's
+`last_synced_at` timestamp. This avoids false 409 responses after successful
+no-change polling.
+
+The persistent `watch-cf-practice` worker also checks up to five verified
+accounts per minute for stale progress or skills, cycling across accounts.
+It rebuilds progress first when official evidence changed, then refreshes
+skill estimates only if their evidence digest or model version is outdated.
+This repairs data left stale by an interrupted sync or catalog updates without
+requiring a manual `rebuild-cf-progress`/`rebuild-cf-skills` command.
+
+If needed, restart the worker after updating this code. Its repair log line
+reads `Codeforces profile repair: ...` when a stale profile was fixed.
