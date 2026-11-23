@@ -31,7 +31,6 @@ def _text(data,name,minlen,maxlen):
 
 
 def _author(uid):
-    # SAY identity only. Do not publish CF history, CF avatar, or any email.
     user=db.session.get(User,uid)
     p=UserProfile.query.filter_by(user_id=uid).first()
     return {'uid':uid,'username':user.name if user else 'deleted_user',

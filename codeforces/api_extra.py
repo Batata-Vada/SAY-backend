@@ -1,4 +1,4 @@
-"""Read-only official submission endpoints and queued refresh API for Step 9.
+"""Official submission endpoints and queued account refresh.
 
 The blueprint is registered once by main.py, separately from existing account
 linking routes so the current codeforces/routes.py does not need replacement.

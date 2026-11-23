@@ -27,11 +27,10 @@ from user_education.routes import education
 from forum.routes import forum
 from say_profile.routes import say_profile
 
-# Alembic must see all ORM tables before migration autogeneration.
 from models.users import User
 from models.session import Session
 from models.problem import Problem
-from models.submission import Submission  # Local code files: unchanged.
+from models.submission import Submission
 from models.codeforces_account import CodeforcesAccount
 from models.codeforces_submission import CodeforcesSubmission
 from models.user_problem_progress import UserProblemProgress
@@ -96,7 +95,6 @@ def create_app(test_config=None):
     )
     db.init_app(app)
     migrate.init_app(app, db)
-    # Never call db.create_all() at application startup: Alembic owns the schema.
     app.register_blueprint(auth)
     app.register_blueprint(users)
     app.register_blueprint(submissions)
