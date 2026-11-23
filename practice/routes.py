@@ -57,7 +57,7 @@ def start_session(user):
         return {"message": "Codeforces problem not found"}, 404
     running = db.session.execute(db.select(PracticeSession).where(
         PracticeSession.uid == user.uid, PracticeSession.status == "ACTIVE"
-    )).scalar_one_or_none()
+    ).order_by(PracticeSession.id.desc()).limit(1)).scalar_one_or_none()
     if running is not None:
         if (datetime.now(timezone.utc) - _utc(running.started_at)).total_seconds() <= 14400:
             return {"message": "Finish your current practice session first",

@@ -100,3 +100,55 @@ flask --app main verify-db-schema
 Use `flask --app main grant-admin <username>` only from a trusted server shell. The `adopt-legacy-oidc` command exists for carefully reviewed account migrations; never merge users based solely on matching Codeforces handles.
 
 The `rest_client/codeforces_oidc_forum.http` file contains example API requests. Keep real session cookies and credentials in private, ignored local files.
+
+## Adaptive recommendations
+
+The Practice page requests `GET /api/recommendations?limit=10&mode=new` and displays
+the returned Codeforces problem metadata and direct problem links. The backend
+preserves solved-problem exclusions, topic scoring, retry selection and recommendation
+logs. The same endpoint supports `retry` and `mixed` modes.
+
+The default recommender is used while **both** the distinct solved-problem count is
+at most 10 and the number of rated Codeforces contests is at most 5. Crossing either
+threshold makes the user eligible for Project Red v5, provided their account is verified,
+Codeforces history is successfully synchronized, the user has a current Codeforces
+contest rating, and enough genuine practice timings have been verified against official
+individual Codeforces accepted submissions. Otherwise the default recommender remains
+active. Model inference failures also return to the default recommender.
+
+The Project Red v5 ONNX model and its external data are under
+`recommendations/artifacts/project_red_v5/`. The compatible scaler values were
+reconstructed from Project Red's v5 training split rather than using its saved scalers,
+which were incorrectly refitted on its test split. The existing model was trained on
+synthetic target data, so the predicted bands should be treated as experimental.
+Use `PROJECT_RED_ENABLED=false` to disable model inference. The number of required
+verified timed solves defaults to five and can be configured with
+`PROJECT_RED_MIN_TIMED_SOLVES`.
+
+After updating the repository, install the new runtime dependencies and migrate
+the database before serving requests:
+
+```bash
+pip install -r requirements.txt
+flask --app main db upgrade
+```
+
+Refresh Codeforces submissions through the existing sync worker, which now also
+updates the current rating and rated-contest count. A worker must be running for
+queued sync jobs to finish:
+
+```bash
+flask --app main process-cf-sync-queue --limit 10
+```
+
+`POST /api/me/practice-sessions` with a canonical numeric `problem_id` starts
+a server-timed session. `POST /api/me/practice-sessions/<id>/finish` completes it.
+`GET /api/me/practice-sessions` lists up to 30 recent sessions. Session timings
+contribute to Project Red only when a Codeforces individual accepted submission
+is found between that session's start and finish, after submission sync. Codeforces
+`time_consumed_ms` is execution time, not human solving time, and is never used
+as a model input. The API uses the existing authenticated session and CSRF checks.
+
+No additional public export API is needed for live recommendations: SAY performs
+feature extraction and inference within the backend. Model retraining remains a
+separate process and should not push identifiable user history to a public repository.
