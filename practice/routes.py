@@ -156,6 +156,46 @@ def start_session(user):
     return {"session": session_payload(row, account)}, 201, {"Cache-Control": "no-store"}
 
 
+@practice.post("/<int:session_id>/abandon")
+@login_required
+def abandon_session(user, session_id):
+    """Discard a running timer without converting it into training evidence."""
+    account = active_codeforces_account(user.uid)
+    if account is None:
+        return {"message": "Session not found"}, 404
+
+    # Conditional update prevents closing a session which the watcher already
+    # finished after verifying an official accepted submission.
+    updated = db.session.execute(
+        db.update(PracticeSession)
+        .where(
+            PracticeSession.id == session_id,
+            PracticeSession.uid == user.uid,
+            PracticeSession.source_account_id == account.id,
+            PracticeSession.status == "ACTIVE",
+        )
+        .values(status="ABANDONED", finished_at=datetime.now(timezone.utc))
+    )
+    if updated.rowcount != 1:
+        db.session.rollback()
+        exists = db.session.execute(
+            db.select(PracticeSession.id).where(
+                PracticeSession.id == session_id,
+                PracticeSession.uid == user.uid,
+                PracticeSession.source_account_id == account.id,
+            )
+        ).scalar_one_or_none()
+        if exists is None:
+            return {"message": "Session not found"}, 404
+        return {"message": "Session has already ended; refresh its status"}, 409
+    db.session.commit()
+    row = db.session.get(PracticeSession, session_id)
+    return {
+        "session": session_payload(row, account),
+        "message": "Practice timer discarded. No training outcome was recorded.",
+    }, 200, {"Cache-Control": "no-store"}
+
+
 @practice.post("/<int:session_id>/finish")
 @login_required
 def finish_session(user, session_id):
