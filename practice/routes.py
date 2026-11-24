@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from flask import Blueprint, request
 
@@ -7,13 +7,51 @@ from database.db import db
 from middleware.auth import login_required
 from models.practice_session import PracticeSession
 from models.problem import Problem
-from recommendations.project_red import official_solved_in_session
+from recommendations.feature_history import (
+    MIN_TRAINING_TIMED_SOLVES, collect_timed_solve_profile,
+    official_solved_in_session,
+)
+from models.codeforces_submission import CodeforcesSubmission
+from models.recommendation_log import RecommendationLog
+from recommendations.project_red import model_status
+from flask import current_app
+from uuid import UUID
 
 practice = Blueprint("practice", __name__, url_prefix="/api/me/practice-sessions")
 
 
 def _utc(value):
     return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+
+
+def session_payload(row, account):
+    data = row.to_dict(official_solved_in_session(row))
+    deadline = _utc(row.started_at) + timedelta(seconds=14400)
+    last_attempt = db.session.execute(
+        db.select(CodeforcesSubmission).where(
+            CodeforcesSubmission.codeforces_account_id == row.source_account_id,
+            CodeforcesSubmission.problem_id == row.problem_id,
+            CodeforcesSubmission.attribution_status == "INDIVIDUAL",
+            CodeforcesSubmission.submitted_at >= row.started_at,
+            CodeforcesSubmission.submitted_at <= (row.finished_at or deadline),
+        ).order_by(
+            CodeforcesSubmission.submitted_at.desc(),
+            CodeforcesSubmission.cf_submission_id.desc(),
+        ).limit(1)
+    ).scalar_one_or_none()
+    data.update({
+        "latest_verdict": last_attempt.verdict if last_attempt else None,
+        "latest_submission_id": last_attempt.cf_submission_id if last_attempt else None,
+        "last_checked_at": (
+            _utc(account.last_synced_at).isoformat()
+            if account and account.last_synced_at else None
+        ),
+        "elapsed_seconds": (
+            max(0, int((datetime.now(timezone.utc) - _utc(row.started_at)).total_seconds()))
+            if row.status == "ACTIVE" else row.duration_seconds
+        ),
+    })
+    return data
 
 
 @practice.get("")
@@ -38,9 +76,62 @@ def list_sessions(user):
     rows = db.session.execute(
         query.order_by(PracticeSession.started_at.desc(), PracticeSession.id.desc()).limit(30)
     ).scalars().all()
-    return {"sessions": [row.to_dict(official_solved_in_session(row)) for row in rows]}, 200, {
+    return {"sessions": [session_payload(row, account) for row in rows]}, 200, {
         "Cache-Control": "private, no-store"
     }
+
+
+@practice.get("/readiness")
+@login_required
+def training_readiness(user):
+    """Report the real historical timed-solve evidence available for future practice.
+
+    This is not a claim that the online model was trained or selected for serving.
+    """
+    account = active_codeforces_account(user.uid)
+    history = (
+        collect_timed_solve_profile(user.uid, account, minimum=1)
+        if account is not None else None
+    )
+    count = history["timed_solved_count"] if history else 0
+    model = model_status()
+    enabled = bool(current_app.config.get("PROJECT_RED_ENABLED", False))
+    if count < MIN_TRAINING_TIMED_SOLVES:
+        ml_state = "awaiting_history"
+        ml_message = "Complete five distinct verified timed solves to become eligible for ML inference."
+    elif not model["ready"]:
+        ml_state = model["reason"]
+        ml_message = (
+            "Your history is ready. Project Red still needs a model trained and "
+            "validated on sufficient real practice outcomes."
+        )
+    elif not enabled:
+        ml_state = "serving_disabled"
+        ml_message = "Your history and validated model are ready, but Project Red serving is disabled."
+    else:
+        ml_state = "eligible"
+        ml_message = (
+            "Your history and a validated model are ready. Refresh recommendations "
+            "to check whether Project Red selects a suitable difficulty window."
+        )
+    return {
+        "ml_model_ready": model["ready"],
+        "ml_model_version": model["version"],
+        "ml_serving_enabled": enabled,
+        "ml_state": ml_state,
+        "ml_status_message": ml_message,
+        "verified_timed_solves": count,
+        "required_timed_solves": MIN_TRAINING_TIMED_SOLVES,
+        "remaining_timed_solves": max(0, MIN_TRAINING_TIMED_SOLVES - count),
+        "history_ready_for_future_sessions": count >= MIN_TRAINING_TIMED_SOLVES,
+        "account_sync_status": account.sync_status if account else "NOT_LINKED",
+        "note": (
+            "Training features for a session only use distinct officially verified "
+            "timed solves observed before that session started. "
+            "A training target must also be rated, previously unsolved, "
+            "and have a confirmed official result."
+        ),
+    }, 200, {"Cache-Control": "private, no-store"}
 
 
 @practice.post("")
@@ -64,12 +155,72 @@ def start_session(user):
                     "session": running.to_dict()}, 409
         running.status = "ABANDONED"
         running.finished_at = datetime.now(timezone.utc)
+    run_id = data.get("recommendation_run_id")
+    if run_id is not None:
+        if not isinstance(run_id, str) or len(run_id) != 36:
+            return {"message": "Invalid recommendation_run_id"}, 400
+        try:
+            parsed = UUID(run_id)
+        except (ValueError, AttributeError):
+            return {"message": "Invalid recommendation_run_id"}, 400
+        if str(parsed) != run_id:
+            return {"message": "Invalid recommendation_run_id"}, 400
+        matching = db.session.execute(
+            db.select(RecommendationLog.id).where(
+                RecommendationLog.run_id == run_id,
+                RecommendationLog.uid == user.uid,
+                RecommendationLog.problem_id == problem.id,
+            ).limit(1)
+        ).first()
+        if matching is None:
+            return {"message": "Recommendation not found for this problem"}, 409
     row = PracticeSession(uid=user.uid, source_account_id=account.id,
                           problem_id=problem.id, status="ACTIVE",
-                          started_at=datetime.now(timezone.utc))
+                          started_at=datetime.now(timezone.utc),
+                          recommendation_run_id=run_id)
     db.session.add(row)
     db.session.commit()
-    return {"session": row.to_dict()}, 201, {"Cache-Control": "no-store"}
+    return {"session": session_payload(row, account)}, 201, {"Cache-Control": "no-store"}
+
+
+@practice.post("/<int:session_id>/abandon")
+@login_required
+def abandon_session(user, session_id):
+    """Discard a running timer without converting it into training evidence."""
+    account = active_codeforces_account(user.uid)
+    if account is None:
+        return {"message": "Session not found"}, 404
+
+    # Conditional update prevents closing a session which the watcher already
+    # finished after verifying an official accepted submission.
+    updated = db.session.execute(
+        db.update(PracticeSession)
+        .where(
+            PracticeSession.id == session_id,
+            PracticeSession.uid == user.uid,
+            PracticeSession.source_account_id == account.id,
+            PracticeSession.status == "ACTIVE",
+        )
+        .values(status="ABANDONED", finished_at=datetime.now(timezone.utc))
+    )
+    if updated.rowcount != 1:
+        db.session.rollback()
+        exists = db.session.execute(
+            db.select(PracticeSession.id).where(
+                PracticeSession.id == session_id,
+                PracticeSession.uid == user.uid,
+                PracticeSession.source_account_id == account.id,
+            )
+        ).scalar_one_or_none()
+        if exists is None:
+            return {"message": "Session not found"}, 404
+        return {"message": "Session has already ended; refresh its status"}, 409
+    db.session.commit()
+    row = db.session.get(PracticeSession, session_id)
+    return {
+        "session": session_payload(row, account),
+        "message": "Practice timer discarded. No training outcome was recorded.",
+    }, 200, {"Cache-Control": "no-store"}
 
 
 @practice.post("/<int:session_id>/finish")
@@ -94,8 +245,7 @@ def finish_session(user, session_id):
     row.finished_at = finished
     row.duration_seconds = elapsed
     db.session.commit()
-    verified = official_solved_in_session(row)
-    return {"session": row.to_dict(verified),
-            "message": "Session recorded. An official Codeforces accepted submission is required for model training."}, 200, {
+    return {"session": session_payload(row, account),
+            "message": "Session recorded. SAY will verify official Codeforces submissions automatically while its worker is running."}, 200, {
         "Cache-Control": "no-store"
     }

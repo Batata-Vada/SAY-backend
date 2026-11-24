@@ -126,52 +126,330 @@ The `rest_client/codeforces_oidc_forum.http` file contains example API requests.
 
 ## Adaptive recommendations
 
-The Practice page requests `GET /api/recommendations?limit=10&mode=new` and displays
-the returned Codeforces problem metadata and direct problem links. The backend
-preserves solved-problem exclusions, topic scoring, retry selection and recommendation
-logs. The same endpoint supports `retry` and `mixed` modes.
+The frontend uses the unchanged `GET /api/recommendations?limit=10&mode=new` endpoint.
+SAY retains its deterministic ranking, solved-problem exclusions, difficulty fallback,
+audit logs, and authenticated practice-session routes. The response fields
+`recommendation_engine`, `model_version`, `selection_reason`,
+`difficulty_prediction`, and `recommendations` remain available.
 
-The default recommender is used while **both** the distinct solved-problem count is
-at most 10 and the number of rated Codeforces contests is at most 5. Crossing either
-threshold makes the user eligible for Project Red v5, provided their account is verified,
-Codeforces history is successfully synchronized, the user has a current Codeforces
-contest rating, and enough genuine practice timings have been verified against official
-individual Codeforces accepted submissions. Otherwise the default recommender remains
-active. Model inference failures also return to the default recommender.
+Project Red is disabled by default. Enable it only after deploying a validated
+real-outcome model artifact:
 
-The Project Red v5 ONNX model and its external data are under
-`recommendations/artifacts/project_red_v5/`. The compatible scaler values were
-reconstructed from Project Red's v5 training split rather than using its saved scalers,
-which were incorrectly refitted on its test split. The existing model was trained on
-synthetic target data, so the predicted bands should be treated as experimental.
-Use `PROJECT_RED_ENABLED=false` to disable model inference. The number of required
-verified timed solves defaults to five and can be configured with
-`PROJECT_RED_MIN_TIMED_SOLVES`.
+```dotenv
+PROJECT_RED_ENABLED=false
+PROJECT_RED_MIN_TIMED_SOLVES=5
+PROJECT_RED_MODEL_PATH=recommendations/artifacts/project_red_real_v1/model.json
+PROJECT_RED_EXPORT_TOKEN=YOUR_PRIVATE_EXPORT_TOKEN
+PROJECT_RED_PSEUDONYM_KEY=YOUR_SEPARATE_PRIVATE_PSEUDONYM_KEY
+```
 
-After updating the repository, install the new runtime dependencies and migrate
-the database before serving requests:
+Set the two secrets to independently generated random values; do not commit them.
+The export token is used **only by Project Red's private ingestion client**. Do not
+send it from the browser. Keep the HTTPS exporter behind your server firewall or
+gateway outside local development.
+
+### Training export and feature contract
+
+`GET /api/internal/project-red/events?after_id=0&limit=200` requires
+`Authorization: Bearer <PROJECT_RED_EXPORT_TOKEN>` and responds with
+`schema_version: 2`, `feature_contract: say-practice-v1`, `events`, and
+`next_after_id`. Cursor pagination uses monotonically increasing practice-session IDs.
+Rerun a complete export when training because older session outcomes can change after
+Codeforces rejudging or synchronization. Raw events are private behavioral records,
+even though user IDs are pseudonymized.
+
+Each event includes `outcome_status` (`SOLVED`, `FAILED`, `UNKNOWN`),
+`official_solved`, `final_failure_observed`, `previously_solved`,
+`problem_rating`, `duration_seconds`, and `history_features`.
+Only eligible first-time `SOLVED` and `FAILED` events should be used as binary labels.
+`FAILED` requires an observed final unsuccessful individual submission,
+no pending decision, and a successful full-history sync following the practice session.
+A recorded start/finish without an official attempt is **not** a verified failure.
+There may be no eligible examples until users have accumulated sufficient observed
+history and a full synchronization has completed.
+
+`history_features` is calculated server-side using the exact same feature extractor
+as inference, as of the target session's start time. It selects the most recent 150
+completed sessions strictly before that time and up to 30 distinct, officially verified
+timed solves observed before that time. Five such solves are required by default.
+The current model contract uses these ordered inputs:
+
+```text
+candidate_rating
+last_problem_rating
+mean_solve_time_minutes
+time_std_minutes
+timed_solved_count
+last_problem_solve_time_minutes
+```
+
+A null `history_features` means no historically observable inference profile exists.
+Existing imported Codeforces submissions do not have known original first-observation
+times. A later sync will record a **new** observation timestamp rather than invent
+historical provenance; it will not retroactively create older historical features.
+
+### Validated real-model serving
+
+Model training, evaluation, calibration, and artifact publication belong to
+`project_red`, not this Flask application. A compatible `model.json` must contain:
+
+```json
+{
+  "artifact_schema_version": 1,
+  "feature_contract": "say-practice-v1",
+  "model_type": "logistic-regression",
+  "model_version": "project-red-real-v1",
+  "features": [
+    "candidate_rating", "last_problem_rating",
+    "mean_solve_time_minutes", "time_std_minutes",
+    "timed_solved_count", "last_problem_solve_time_minutes"
+  ],
+  "x_mean": [0, 0, 0, 0, 0, 0],
+  "x_scale": [1, 1, 1, 1, 1, 1],
+  "coef": [-0.1, 0, 0, 0, 0, 0],
+  "intercept": 0,
+  "target_probability": 0.60,
+  "acceptable_probability_range": [0.45, 0.75],
+  "rating_grid": [800, 3500, 100]
+}
+```
+
+**The numbers above describe artifact structure only, not a trained model.**
+Never publish or enable a dummy artifact. SAY validates model type, schema,
+feature order, finite coefficients and difficulty monotonicity. It derives an
+appropriate window from the accepted probability range and falls back to the
+existing deterministic recommender if the artifact is absent, invalid, or does
+not produce a suitable difficulty window. Model version is taken from the
+artifact when that model is actually selected. To deploy a replacement model,
+update the artifact at a new versioned path and restart Flask; the artifact loader
+caches models within each process.
+
+The server's `POST /api/me/practice-sessions` still only requires a numeric
+`problem_id`. An optional `recommendation_run_id` can now be supplied to link
+practice to a recommendation previously generated for the same user and problem.
+Existing frontend requests and response keys remain supported.
+
+### Deployment and database upgrade
+
+This release adds nullable Codeforces submission observation timestamps, the last
+successful full-sync timestamp, and optional practice recommendation attribution.
+These require a database migration before restarting the new application:
 
 ```bash
-pip install -r requirements.txt
+flask --app main db current
+flask --app main db heads
+# Back up the SQLite file instance/app.db before upgrading.
 flask --app main db upgrade
+flask --app main verify-db-schema
 ```
 
-Refresh Codeforces submissions through the existing sync worker, which now also
-updates the current rating and rated-contest count. A worker must be running for
-queued sync jobs to finish:
+Do not stamp an older database without reconciling its actual schema. After migration,
+run a **full** Codeforces sync to establish coverage and observation timestamps:
 
 ```bash
-flask --app main process-cf-sync-queue --limit 10
+flask --app main sync-cf-submissions --account-id <ID> --full
 ```
 
-`POST /api/me/practice-sessions` with a canonical numeric `problem_id` starts
-a server-timed session. `POST /api/me/practice-sessions/<id>/finish` completes it.
-`GET /api/me/practice-sessions` lists up to 30 recent sessions. Session timings
-contribute to Project Red only when a Codeforces individual accepted submission
-is found between that session's start and finish, after submission sync. Codeforces
-`time_consumed_ms` is execution time, not human solving time, and is never used
-as a model input. The API uses the existing authenticated session and CSRF checks.
+Inspect `flask --app main sync-cf-submissions --help` for the exact installed
+CLI option names. Existing queued sync workers continue to work.
 
-No additional public export API is needed for live recommendations: SAY performs
-feature extraction and inference within the backend. Model retraining remains a
-separate process and should not push identifiable user history to a public repository.
+Legacy `project_red_v5` files remain in Git history for reproducibility but
+are not loaded by the new serving path. The old model was trained on synthetic
+difficulty-window targets; SAY does not silently fall back to that model.
+
+## Automatic Codeforces practice synchronization
+
+Run a single persistent watcher alongside the Flask web process:
+
+```bash
+flask --app main watch-cf-practice
+```
+
+The watcher checks active practice sessions approximately every 5 seconds by default,
+subject to the shared Codeforces API rate limiter and number of active users.
+It runs in a separate process, not within an HTTP request or Flask thread.
+It also processes jobs submitted through the existing `/api/codeforces/sync`
+queue, so no manual queue-worker command is needed while it is running.
+Run only one watcher on a local SQLite installation.
+
+Optional environment variables:
+
+```dotenv
+CODEFORCES_WATCH_INTERVAL_SECONDS=5
+CODEFORCES_WATCH_BATCH_SIZE=10
+CODEFORCES_WATCH_PAGE_LIMIT=10
+```
+
+On an official individual `OK` verdict with `TESTS`, the watcher finishes
+the matching active session using the Codeforces submission timestamp. Other
+verdicts keep the timer active. Progress and skill estimates are rebuilt after
+new or changed official submissions. The existing practice session listing
+now also exposes `latest_verdict`, `latest_submission_id`,
+`elapsed_seconds`, and `last_checked_at`. Reloading the frontend does
+not reset the server-side timer.
+
+Practice shorter than 60 seconds and sessions exceeding four hours do not
+qualify as timed training events. Recent polling does not assert complete
+submission-history coverage; the standard full sync is still needed to
+establish reliable failed-outcome labels for Project Red.
+
+### Diagnosing practice synchronization
+
+With the persistent watcher stopped, run a single real Codeforces poll:
+
+```bash
+flask --app main watch-cf-practice --once
+```
+
+The summary reports eligible accounts, due accounts, successful/failed account
+checks, and completed sessions. The continuous watcher also prints a startup
+summary and per-poll status. If `eligible_accounts` is zero, check whether
+the linked account is verified and whether there is an active session or one
+finished within the last 15 minutes. Finished sessions remain finished:
+delayed Codeforces acceptance can update their official verification status
+without changing the user's recorded finish time. The watcher does not modify
+the five-prior-timed-solves rule for Project Red training.
+
+## One-command local development
+
+With the three sibling repositories in the same parent directory, use:
+
+```bash
+cd SAY-backend
+.venv/bin/python scripts/run_local.py
+```
+
+The launcher starts Flask on port 5001, Next.js on port 3000, the Codeforces
+practice watcher, and the Project Red pipeline. It uses the existing
+`.venv` environments in SAY-backend and project_red, plus `npm ci`-installed
+frontend modules. Ensure the ports are free and the database is migrated
+before launching. Press Ctrl+C to shut down the processes.
+
+It reads the existing local `SAY-backend/.env` configuration; no user secrets
+are added to Git. In particular, it maps `PROJECT_RED_EXPORT_TOKEN` to
+Project Red's private `SAY_PROJECT_RED_EXPORT_TOKEN` environment variable,
+and sets the default model location to the sibling online artifact.
+Environment variables already explicitly set by the operator take precedence.
+
+The watcher handles active practice polling, queued Codeforces account syncs,
+a full-history refresh for one due account per hour (default 24-hour
+per-account cadence), and a 24-hour problem-catalog refresh. The Project Red
+worker completely re-exports events, rebuilds `training_rows.csv`, and
+updates the online learner every 180 seconds. Missing historical features do
+not become fabricated training rows. Failures are logged and retried in the
+next cycle. All live services must remain running for automation.
+
+Optional backend settings:
+
+```dotenv
+CODEFORCES_FULL_SYNC_INTERVAL_HOURS=24
+CODEFORCES_AUTO_CATALOG_SYNC=true
+CODEFORCES_CATALOG_INTERVAL_HOURS=24
+PROJECT_RED_PIPELINE_INTERVAL_SECONDS=180
+```
+
+The backend now reloads model JSON when the artifact changes on disk rather
+than keeping the first loaded artifact indefinitely in memory. Project Red
+inference still requires `PROJECT_RED_ENABLED=true` explicitly, and
+should only be enabled after the online artifact has been evaluated on
+real held-out data. The default remains `false` for safety.
+
+### Automatic progress and skill freshness
+
+An unchanged Codeforces account synchronization is not a change in skill
+evidence. The mastery endpoint validates the materialized progress watermark
+and a digest of the official problem evidence, not merely the account's
+`last_synced_at` timestamp. This avoids false 409 responses after successful
+no-change polling.
+
+The persistent `watch-cf-practice` worker also checks up to five verified
+accounts per minute for stale progress or skills, cycling across accounts.
+It rebuilds progress first when official evidence changed, then refreshes
+skill estimates only if their evidence digest or model version is outdated.
+This repairs data left stale by an interrupted sync or catalog updates without
+requiring a manual `rebuild-cf-progress`/`rebuild-cf-skills` command.
+
+If needed, restart the worker after updating this code. Its repair log line
+reads `Codeforces profile repair: ...` when a stale profile was fixed.
+
+### Diagnosing empty Project Red datasets
+
+`data/say_practice_events.jsonl` is not the same as `training_rows.csv`.
+The exporter includes qualifying finished practice sessions even when their
+outcomes are UNKNOWN or their historical features are unavailable.
+The dataset builder excludes unrated targets, previously solved targets,
+UNKNOWN outcomes, and targets without enough earlier timed history.
+A blank CSV apart from headers means there are currently zero eligible
+training labels; it is **not** evidence that the worker is broken.
+
+The backend requires five **distinct** rated, officially accepted, timed
+practice solves from the same active account, with final verdicts first
+observed **before the next target session starts**. Imported submissions
+without tracked SAY timers cannot be treated as timed solves. A later
+Codeforces submission after the session's recorded finish time is not
+retroactively inside that session.
+
+Authenticated `GET /api/me/practice-sessions/readiness` returns the number
+of real verified timed solves available for **future** sessions, remaining
+solves needed, and source sync status. The frontend surfaces this on Practice.
+This is a historical-data readiness indicator, not proof that the online model
+has trained or that Project Red inference was selected.
+
+`CODEFORCES_WATCH_INTERVAL_SECONDS` defaults to 5 and accepts values 5–3600.
+A local `.env` value takes precedence over the default; update any previous
+`CODEFORCES_WATCH_INTERVAL_SECONDS=30` setting to 5. Worker cycles target
+five-second starts but can take longer when Codeforces is slow, history
+paging is required, multiple users are active, or the host-wide rate limiter
+delays calls. Project Red's separate dataset-export interval is 180 seconds.
+
+### Project Red eligibility without contest participation
+
+SAY does not require any minimum number of rated Codeforces contests or
+total solved problems before trying Project Red inference. The response
+continues to report solved-problem and rated-contest counts for context only.
+A synchronized linked account can attempt inference when
+`PROJECT_RED_ENABLED=true` and the required verified, timed practice
+features are available. The separate five-distinct-prior-timed-solves
+historical training requirement remains unchanged; the recommender falls
+back safely when features, a validated model artifact, or suitable candidate
+problems are unavailable.
+
+## Updating safely without losing local files
+
+**Fetching is the safe first step:**
+
+```bash
+git fetch --tags origin main
+git status --short
+git diff --name-status HEAD FETCH_HEAD
+```
+
+These commands do not change working files. `git fetch` is not a pull; it
+does not delete local `.env` files, SQLite databases, training CSVs, virtual
+environments, or model artifacts.
+
+New clones can use the guarded updater from the repository root:
+
+```bash
+bash scripts/safe_update.sh          # Fetch only; leave working files untouched
+bash scripts/safe_update.sh --apply  # Attempt a checked fast-forward
+```
+
+The `--apply` option refuses the update when tracked files have uncommitted
+changes, incoming commits would delete existing tracked files, incoming
+files collide with existing ignored or untracked paths, or the branch
+cannot fast-forward. If checks pass, version-controlled application files
+**are updated** to the newer commit while personal ignored files are
+preserved. This guard applies only when this script is used: Git cannot
+prevent someone from running a regular `git pull` directly.
+
+**Existing clones without this script** should use `git fetch` and inspect
+the incoming file changes before their first pull. Earlier cleanup commits
+stopped tracking databases, exported CSVs, and generated model artifacts.
+An ordinary pull may delete previously tracked local copies. Back up those
+files **outside the repository** before applying any deletion and restore
+them afterward if needed. Do not run `git reset --hard` or `git clean -fdx`
+as a shortcut.
+
+`.gitignore` only controls new untracked files; it never protects files
+recorded in older commits. Keep user data and credentials out of Git.

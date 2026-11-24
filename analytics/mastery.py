@@ -156,10 +156,9 @@ def read_user_skills(uid: int, *, limit: int = 100, offset: int = 0) -> dict:
         raise SkillEstimateError(
             "Skill estimates are stale; run flask --app main rebuild-cf-skills --uid " + str(uid)
         )
-    if as_utc(account.last_synced_at) > as_utc(summary.updated_at):
-        raise SkillEstimateError(
-            "A newer Codeforces sync exists; rebuild progress then skills for uid " + str(uid)
-        )
+    # A successful refresh may advance last_synced_at without changing any
+    # submissions. The verified progress watermark and exact evidence digest
+    # above determine whether a skill rebuild is actually required.
 
     all_tags = db.session.execute(
         db.select(UserTopicMastery).where(

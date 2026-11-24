@@ -20,6 +20,7 @@ from submissions.routes import submissions
 from codeforces.routes import codeforces
 from codeforces.api_extra import codeforces_api
 from recommendations.api_alias import recommendation_api
+from recommendations.training_export import training_export
 from analytics.routes import analytics
 from recommendations.routes import recommendations
 from practice.routes import practice
@@ -48,6 +49,7 @@ from models.discussion import DiscussionPost, DiscussionReply
 
 from problem_stats.sync import sync_codeforces_problems
 from codeforces.sync_queue import process_one_sync_request
+from codeforces.practice_watcher import run_worker, watch_once
 from codeforces.submission_sync import sync_codeforces_submissions
 from codeforces.reconciliation import reconcile_unresolved_submissions
 from analytics.progress import rebuild_user_progress, ProgressBuildError
@@ -104,6 +106,7 @@ def create_app(test_config=None):
     app.register_blueprint(codeforces)
     app.register_blueprint(codeforces_api)
     app.register_blueprint(recommendation_api)
+    app.register_blueprint(training_export)
     app.register_blueprint(analytics)
     app.register_blueprint(recommendations)
     app.register_blueprint(practice)
@@ -194,6 +197,15 @@ def create_app(test_config=None):
             app.logger.exception("Skill rebuild failed for uid=%s", uid)
             raise click.ClickException("Skill rebuild failed; check server logs") from exc
         click.echo(json.dumps(summary, indent=2))
+
+    @app.cli.command("watch-cf-practice")
+    @click.option("--once", is_flag=True, help="Run a single practice poll for troubleshooting.")
+    def watch_cf_practice_command(once):
+        """Continuously sync active practice sessions and queued account refreshes."""
+        if once:
+            click.echo(json.dumps(watch_once(), indent=2))
+        else:
+            run_worker()
 
     @app.cli.command("process-cf-sync-queue")
     @click.option("--limit", default=1, type=click.IntRange(1, 20), show_default=True)
