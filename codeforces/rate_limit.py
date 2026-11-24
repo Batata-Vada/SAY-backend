@@ -45,6 +45,10 @@ def wait_for_codeforces_slot():
             fcntl.flock(lockfile.fileno(), fcntl.LOCK_UN)
 
 
+class AccountSyncBusy(RuntimeError):
+    """The account is currently being synchronized by another process."""
+
+
 @contextmanager
 def exclusive_account_sync(account_id):
     """Reject concurrent syncs of the same account on this host."""
@@ -53,7 +57,7 @@ def exclusive_account_sync(account_id):
         try:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
-            raise RuntimeError("This Codeforces account is already syncing") from exc
+            raise AccountSyncBusy("This Codeforces account is already syncing") from exc
         try:
             yield
         finally:

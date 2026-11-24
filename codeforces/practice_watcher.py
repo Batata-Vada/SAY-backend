@@ -12,6 +12,7 @@ from sqlalchemy import func
 from analytics.mastery import SkillEstimateError, read_user_skills, rebuild_user_skills
 from analytics.progress import read_user_progress, rebuild_user_progress
 from codeforces.submission_sync import sync_active_practice_submissions
+from codeforces.rate_limit import AccountSyncBusy
 from codeforces.sync_queue import process_one_sync_request, enqueue_sync, SyncAlreadyQueued
 from problem_stats.sync import sync_codeforces_problems
 from database.db import db
@@ -107,6 +108,7 @@ def watch_once(*, last_polled=None):
     checked = 0
     completed = 0
     failed = 0
+    skipped_busy = 0
     for account_id, uid, first_started_at in due[:limit]:
         last_polled[account_id] = time.monotonic()
         try:
@@ -126,6 +128,11 @@ def watch_once(*, last_polled=None):
                 "Practice poll account=%s inserted=%s updated=%s finished=%s",
                 account_id, stats["inserted"], stats["updated"], result["completed"],
             )
+        except AccountSyncBusy:
+            # Another worker is importing this account; retry on a later poll.
+            skipped_busy += 1
+            db.session.rollback()
+            logger.info("Practice poll deferred: account %s is already syncing", account_id)
         except Exception:
             failed += 1
             db.session.rollback()
@@ -140,6 +147,7 @@ def watch_once(*, last_polled=None):
         "accounts_due": len(due),
         "accounts_checked": checked,
         "accounts_failed": failed,
+        "accounts_skipped_busy": skipped_busy,
         "sessions_completed": completed,
     }
 

@@ -12,6 +12,7 @@ from database.db import db
 from models.codeforces_account import CodeforcesAccount
 from models.codeforces_sync_request import CodeforcesSyncRequest
 from codeforces.submission_sync import sync_codeforces_submissions
+from codeforces.rate_limit import AccountSyncBusy
 from analytics.progress import rebuild_user_progress
 from analytics.mastery import rebuild_user_skills
 
@@ -117,6 +118,18 @@ def process_one_sync_request():
         job.finished_at = datetime.now(timezone.utc)
         db.session.commit()
         return {"job_id": job_id, "status": "SUCCEEDED"}
+    except AccountSyncBusy:
+        # Another worker owns the account lock. Do not fail a valid queued sync.
+        db.session.rollback()
+        job = db.session.get(CodeforcesSyncRequest, job_id)
+        if job is not None and job.status == "RUNNING":
+            job.status = "QUEUED"
+            job.started_at = None
+            job.finished_at = None
+            job.error_message = None
+            db.session.commit()
+        logger.info("Codeforces sync job %s deferred: account is busy", job_id)
+        return {"job_id": job_id, "status": "QUEUED", "reason": "account_busy"}
     except Exception:
         logger.exception("Codeforces sync job %s failed", job_id)
         db.session.rollback()
