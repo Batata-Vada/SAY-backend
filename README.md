@@ -453,3 +453,23 @@ as a shortcut.
 
 `.gitignore` only controls new untracked files; it never protects files
 recorded in older commits. Keep user data and credentials out of Git.
+
+### Concurrent Codeforces synchronization
+
+One Codeforces account can be synchronized by only one process at a time.
+The host-local lock in `codeforces/rate_limit.py` protects against duplicate
+imports when the practice watcher overlaps a full-history sync or another
+worker. A busy account is now **deferred rather than failed**: the watcher
+reports `accounts_skipped_busy` and tries again on a later cycle, while a
+queued full-history request remains `QUEUED` for another attempt.
+
+A single `scripts/run_local.py` instance already launches a watcher and
+processes the sync queue. Do not run a second `watch-cf-practice` or
+`process-cf-sync-queue` worker alongside it unless you deliberately need
+multiple processes. See active workers using
+`ps -ef | grep -E '[w]atch-cf-practice|[p]rocess-cf-sync-queue|[s]ync-cf-submissions'`.
+Do not remove `instance/codeforces-account-*.lock` files to fix contention:
+the advisory lock is released automatically when its owning process ends.
+
+Lock contention does not change database structure and requires no Alembic
+migration.

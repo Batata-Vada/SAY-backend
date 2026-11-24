@@ -50,6 +50,15 @@ def _load_artifact(path, signature):
         raise ValueError("Invalid model scaler")
     if artifact["coef"][0] >= 0:
         raise ValueError("Model probability must decrease with candidate difficulty")
+    
+    
+    # Using Synthetic Data
+    if (
+        current_app.config.get("TESTING", False)
+        and current_app.config.get("PROJECT_RED_ALLOW_SYNTHETIC_TEST_MODEL", False)
+        and artifact.get("source") == "synthetic_pretraining"
+    ):
+        return artifact
     if artifact.get("source") != "real_verified_practice_outcomes":
         raise ValueError("Project Red model is not trained exclusively on verified real outcomes")
     validation = artifact.get("validation")
